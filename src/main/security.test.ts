@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { join, resolve } from "node:path";
 import {
   isTrustedRendererUrl,
   isVideoOnlyMediaRequest,
@@ -38,23 +39,24 @@ describe("renderer trust boundary", () => {
 
 describe("application protocol", () => {
   it("keeps resolved assets inside the renderer root", () => {
-    expect(resolveRendererAsset("/app/renderer", "app://posture/")).toBe(
-      "/app/renderer/index.html",
+    const rendererRoot = resolve("/app/renderer");
+    expect(resolveRendererAsset(rendererRoot, "app://posture/")).toBe(
+      join(rendererRoot, "index.html"),
     );
     expect(
       resolveRendererAsset(
-        "/app/renderer",
+        rendererRoot,
         "app://posture/assets/index.js?cache=1",
       ),
-    ).toBe("/app/renderer/assets/index.js");
+    ).toBe(join(rendererRoot, "assets", "index.js"));
     expect(
-      resolveRendererAsset("/app/renderer", "app://posture/%2e%2e%2fsecret"),
+      resolveRendererAsset(rendererRoot, "app://posture/%2e%2e%2fsecret"),
     ).toBeNull();
     expect(
-      resolveRendererAsset("/app/renderer", "app://postureevil/index.html"),
+      resolveRendererAsset(rendererRoot, "app://postureevil/index.html"),
     ).toBeNull();
     expect(
-      resolveRendererAsset("/app/renderer", "app://posture/%E0%A4%A"),
+      resolveRendererAsset(rendererRoot, "app://posture/%E0%A4%A"),
     ).toBeNull();
   });
 });
