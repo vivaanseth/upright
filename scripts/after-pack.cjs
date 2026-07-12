@@ -2,6 +2,43 @@ const path = require("node:path");
 const fs = require("node:fs/promises");
 const { flipFuses, FuseVersion, FuseV1Options } = require("@electron/fuses");
 
+async function resolveExecutable(context, name) {
+  if (context.electronPlatformName === "darwin") {
+    return path.join(
+      context.appOutDir,
+      `${name}.app`,
+      "Contents",
+      "MacOS",
+      name,
+    );
+  }
+
+  if (context.electronPlatformName === "win32") {
+    return path.join(context.appOutDir, `${name}.exe`);
+  }
+
+  const candidates = await fs.readdir(context.appOutDir, {
+    withFileTypes: true,
+  });
+  for (const candidate of candidates) {
+    if (!candidate.isFile()) continue;
+
+    const candidatePath = path.join(context.appOutDir, candidate.name);
+    const mode = (await fs.stat(candidatePath)).mode;
+    const isExecutable = (mode & 0o111) !== 0;
+    const isElectronHelper =
+      candidate.name === "chrome-sandbox" ||
+      candidate.name.endsWith(".so") ||
+      candidate.name.endsWith(".bin");
+
+    if (isExecutable && !isElectronHelper) {
+      return candidatePath;
+    }
+  }
+
+  throw new Error(`Unable to find packaged executable in ${context.appOutDir}`);
+}
+
 exports.default = async function afterPack(context) {
   const name = context.packager.appInfo.productFilename;
   if (context.electronPlatformName === "darwin") {
@@ -39,13 +76,7 @@ exports.default = async function afterPack(context) {
     );
   }
 
-  const executable =
-    context.electronPlatformName === "darwin"
-      ? path.join(context.appOutDir, `${name}.app`, "Contents", "MacOS", name)
-      : path.join(
-          context.appOutDir,
-          `${name}${context.electronPlatformName === "win32" ? ".exe" : ""}`,
-        );
+  const executable = await resolveExecutable(context, name);
 
   await flipFuses(executable, {
     version: FuseVersion.V1,

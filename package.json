@@ -29,9 +29,9 @@
     "test:e2e": "playwright test",
     "package": "pnpm build && electron-builder --dir",
     "dist": "pnpm build && electron-builder",
-    "dist:mac": "pnpm build && electron-builder --mac --universal",
-    "dist:win": "pnpm build && electron-builder --win --x64",
-    "dist:linux": "pnpm build && electron-builder --linux --x64"
+    "dist:mac": "pnpm build && electron-builder --mac --universal --publish never",
+    "dist:win": "pnpm build && electron-builder --win --x64 --publish never",
+    "dist:linux": "pnpm build && electron-builder --linux --x64 --publish never"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "0.10.35",
@@ -164,6 +164,6 @@
         }
       ]
     },
-    "publish": null
+    "publish": "never"
   }
 }
