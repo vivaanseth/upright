@@ -136,6 +136,7 @@
     "linux": {
       "icon": "build/icon.png",
       "category": "Utility",
+      "executableName": "Posture",
       "synopsis": "Private posture reminders from your webcam",
       "target": [
         {

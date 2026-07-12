@@ -1,6 +1,16 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
+const pkg = require("../package.json");
 const { flipFuses, FuseVersion, FuseV1Options } = require("@electron/fuses");
+
+async function exists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function resolveExecutable(context, name) {
   if (context.electronPlatformName === "darwin") {
@@ -17,6 +27,18 @@ async function resolveExecutable(context, name) {
     return path.join(context.appOutDir, `${name}.exe`);
   }
 
+  const exactNames = [
+    name,
+    context.packager.appInfo.sanitizedName,
+    context.packager.appInfo.name,
+    pkg.name,
+  ].filter(Boolean);
+
+  for (const exactName of exactNames) {
+    const candidatePath = path.join(context.appOutDir, exactName);
+    if (await exists(candidatePath)) return candidatePath;
+  }
+
   const candidates = await fs.readdir(context.appOutDir, {
     withFileTypes: true,
   });
@@ -28,6 +50,7 @@ async function resolveExecutable(context, name) {
     const isExecutable = (mode & 0o111) !== 0;
     const isElectronHelper =
       candidate.name === "chrome-sandbox" ||
+      candidate.name.includes("crashpad") ||
       candidate.name.endsWith(".so") ||
       candidate.name.endsWith(".bin");
 
