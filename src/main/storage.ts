@@ -8,17 +8,20 @@ import {
   calibrationSchema,
   calibrationRecordSchema,
   defaultSettings,
+  exportV2Schema,
+  sessionRecordSchema,
   sessionSummarySchema,
   settingsSchema,
   type Calibration,
   type CalibrationRecord,
+  type SessionRecord,
   type SessionSummary,
   type Settings,
   type StorageRecoveryNotice,
 } from "../shared/contracts";
 
 const calibrationsSchema = z.array(calibrationRecordSchema);
-const sessionsSchema = z.array(sessionSummarySchema);
+const sessionRecordsSchema = z.array(sessionRecordSchema);
 type StoreFile = StorageRecoveryNotice["file"];
 
 export class LocalStore {
@@ -98,7 +101,18 @@ export class LocalStore {
   }
 
   async getSessions(): Promise<SessionSummary[]> {
-    return this.readValidated("sessions.json", sessionsSchema, []);
+    const records = await this.readValidated(
+      "sessions.json",
+      sessionRecordsSchema,
+      [],
+    );
+    const migrated = records.map((record) => this.migrateSession(record));
+    if (records.some((record) => record.schemaVersion === 1)) {
+      const persist = () => this.atomicWriteUnlocked("sessions.json", migrated);
+      if (this.writeActive) await persist();
+      else await this.enqueueWrite(persist);
+    }
+    return migrated;
   }
 
   async saveSession(session: SessionSummary): Promise<SessionSummary[]> {
@@ -114,6 +128,24 @@ export class LocalStore {
         .slice(0, 500);
       await this.atomicWriteUnlocked("sessions.json", next);
       return next;
+    });
+  }
+
+  async recoverUnfinishedSessions(): Promise<SessionSummary[]> {
+    return this.enqueueWrite(async () => {
+      const current = await this.getSessions();
+      let changed = false;
+      const recovered = current.map((session) => {
+        if (session.endedAt) return session;
+        changed = true;
+        return sessionSummarySchema.parse({
+          ...session,
+          endedAt: session.updatedAt,
+          recovered: true,
+        });
+      });
+      if (changed) await this.atomicWriteUnlocked("sessions.json", recovered);
+      return recovered;
     });
   }
 
@@ -135,8 +167,8 @@ export class LocalStore {
   }
 
   async exportData(destination: string): Promise<void> {
-    const payload = {
-      schemaVersion: 1,
+    const payload = exportV2Schema.parse({
+      schemaVersion: 2,
       exportedAt: new Date().toISOString(),
       app: "Posture",
       settings: await this.getSettings(),
@@ -144,9 +176,19 @@ export class LocalStore {
       sessions: await this.getSessions(),
       privacyNote:
         "This export contains settings, calibration measurements, and aggregate session data. It contains no images, video, or raw landmarks.",
-    };
+    });
     await mkdir(dirname(destination), { recursive: true });
     await this.enqueueWrite(() => this.atomicReplace(destination, payload));
+  }
+
+  private migrateSession(record: SessionRecord): SessionSummary {
+    if (record.schemaVersion === 2) return record;
+    return sessionSummarySchema.parse({
+      ...record,
+      schemaVersion: 2,
+      updatedAt: record.endedAt ?? record.startedAt,
+      recovered: false,
+    });
   }
 
   private enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {

@@ -633,6 +633,7 @@ else {
         mainWindow.webContents.send("storage:recovery", notice);
     });
     await store.initialize();
+    await store.recoverUnfinishedSessions();
     settings = await store.getSettings();
     if (app.isPackaged || !process.env.ELECTRON_RENDERER_URL)
       registerAppProtocol();

@@ -18,7 +18,7 @@ const snapshot: TrackingSnapshot = {
 };
 
 const session: SessionSummary = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   id: "00000000-0000-4000-8000-000000000000",
   startedAt: "2026-07-12T00:00:00.000Z",
   endedAt: null,
@@ -31,6 +31,8 @@ const session: SessionSummary = {
   averageScore: 90,
   reminderCount: 0,
   calibrationId: "00000000-0000-4000-8000-000000000000",
+  updatedAt: "2026-07-12T00:00:00.000Z",
+  recovered: false,
 };
 
 describe("Dashboard", () => {

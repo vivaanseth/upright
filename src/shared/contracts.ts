@@ -188,8 +188,7 @@ export const trackingSnapshotSchema = z.object({
 
 export type TrackingSnapshot = z.infer<typeof trackingSnapshotSchema>;
 
-export const sessionSummarySchema = z.object({
-  schemaVersion: z.literal(1),
+const sessionSummaryFields = {
   id: z.string().uuid(),
   startedAt: z.string().datetime(),
   endedAt: z.string().datetime().nullable(),
@@ -202,9 +201,37 @@ export const sessionSummarySchema = z.object({
   averageScore: z.number().min(0).max(100).nullable(),
   reminderCount: z.number().int().min(0),
   calibrationId: z.string().uuid().nullable(),
+};
+
+export const sessionSummaryV1Schema = z.object({
+  schemaVersion: z.literal(1),
+  ...sessionSummaryFields,
+});
+
+export const sessionSummarySchema = z.object({
+  schemaVersion: z.literal(2),
+  ...sessionSummaryFields,
+  updatedAt: z.string().datetime(),
+  recovered: z.boolean(),
 });
 
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
+export const sessionRecordSchema = z.union([
+  sessionSummarySchema,
+  sessionSummaryV1Schema,
+]);
+export type SessionRecord = z.infer<typeof sessionRecordSchema>;
+
+export const exportV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  exportedAt: z.string().datetime(),
+  app: z.literal("Posture"),
+  settings: settingsSchema,
+  calibrations: z.array(calibrationRecordSchema),
+  sessions: z.array(sessionSummarySchema),
+  privacyNote: z.string().min(1).max(500),
+});
+export type ExportV2 = z.infer<typeof exportV2Schema>;
 
 export const appInfoSchema = z.object({
   name: z.string(),

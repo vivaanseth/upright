@@ -6,6 +6,10 @@ import type {
   SessionSummary,
   StorageRecoveryNotice,
 } from "../shared/contracts";
+import {
+  sessionSummarySchema,
+  sessionSummaryV1Schema,
+} from "../shared/contracts";
 import { LocalStore } from "./storage";
 
 const temporaryRoots: string[] = [];
@@ -20,7 +24,7 @@ const createStore = async (
 };
 
 const session = (index: number): SessionSummary => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
   startedAt: new Date(Date.now() - index * 1_000).toISOString(),
   endedAt: null,
@@ -33,6 +37,8 @@ const session = (index: number): SessionSummary => ({
   averageScore: 90,
   reminderCount: 0,
   calibrationId: null,
+  updatedAt: new Date(Date.now() - index * 1_000).toISOString(),
+  recovered: false,
 });
 
 afterEach(async () => {
@@ -87,6 +93,37 @@ describe("LocalStore", () => {
     expect(saved[0].id).toBe(session(0).id);
   });
 
+  it("migrates V1 sessions without inventing recovery state", async () => {
+    const { root, store } = await createStore();
+    const current = session(1);
+    const legacy = sessionSummaryV1Schema.parse({
+      ...current,
+      schemaVersion: 1,
+    });
+    await writeFile(
+      join(root, "sessions.json"),
+      JSON.stringify([legacy]),
+      "utf8",
+    );
+    const migrated = await store.getSessions();
+    expect(migrated[0]).toMatchObject({ schemaVersion: 2, recovered: false });
+    const persisted = sessionSummarySchema
+      .array()
+      .parse(JSON.parse(await readFile(join(root, "sessions.json"), "utf8")));
+    expect(persisted[0]).toMatchObject({ schemaVersion: 2, recovered: false });
+  });
+
+  it("finalizes an unfinished session after a crash", async () => {
+    const { store } = await createStore();
+    const unfinished = session(1);
+    await store.saveSession(unfinished);
+    const recovered = await store.recoverUnfinishedSessions();
+    expect(recovered[0]).toMatchObject({
+      endedAt: unfinished.updatedAt,
+      recovered: true,
+    });
+  });
+
   it("exports aggregates without private frame or landmark fields", async () => {
     const { root, store } = await createStore();
     await store.saveSession(session(0));
@@ -100,5 +137,6 @@ describe("LocalStore", () => {
     expect((await readdir(root)).some((file) => file.endsWith(".tmp"))).toBe(
       false,
     );
+    expect(JSON.parse(exported)).toMatchObject({ schemaVersion: 2 });
   });
 });

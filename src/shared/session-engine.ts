@@ -22,7 +22,7 @@ export class SessionAccumulator {
 
   constructor(calibrationId: string | null, startedAt = new Date()) {
     this.summary = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: crypto.randomUUID(),
       startedAt: startedAt.toISOString(),
       endedAt: null,
@@ -35,10 +35,13 @@ export class SessionAccumulator {
       averageScore: null,
       reminderCount: 0,
       calibrationId,
+      updatedAt: startedAt.toISOString(),
+      recovered: false,
     };
   }
 
   update(snapshot: TrackingSnapshot): SessionSummary {
+    this.summary.updatedAt = new Date().toISOString();
     if (this.lastTimestamp !== null) {
       const rawDelta = snapshot.timestamp - this.lastTimestamp;
       const delta =
@@ -74,11 +77,13 @@ export class SessionAccumulator {
 
   recordReminder(): SessionSummary {
     this.summary.reminderCount += 1;
+    this.summary.updatedAt = new Date().toISOString();
     return this.getSummary();
   }
 
   end(endedAt = new Date()): SessionSummary {
     this.summary.endedAt = endedAt.toISOString();
+    this.summary.updatedAt = endedAt.toISOString();
     return this.getSummary();
   }
 
