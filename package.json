@@ -1,6 +1,6 @@
 {
   "name": "posture-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A private, local-only posture companion for macOS, Windows, and Linux.",
   "main": "out/main/index.js",
   "author": {

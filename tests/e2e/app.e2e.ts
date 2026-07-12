@@ -8,10 +8,13 @@ const launch = async (
   userData: string,
   environment: Record<string, string> = {},
 ) => {
-  const linuxSandboxArgs = process.platform === "linux" ? ["--no-sandbox"] : [];
+  const linuxTestArgs =
+    process.platform === "linux"
+      ? ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"]
+      : [];
   return electron.launch({
     args: [
-      ...linuxSandboxArgs,
+      ...linuxTestArgs,
       "--use-fake-device-for-media-stream",
       "--use-fake-ui-for-media-stream",
       `--user-data-dir=${userData}`,
@@ -30,6 +33,7 @@ const openCameraStep = async (window: Page): Promise<void> => {
 };
 
 test("launches the secure onboarding flow", async () => {
+  test.setTimeout(60_000);
   const userData = await mkdtemp(join(tmpdir(), "posture-e2e-"));
   const app = await launch(userData);
 
@@ -66,6 +70,26 @@ test("launches the secure onboarding flow", async () => {
     await expect(
       window.getByRole("button", { name: "Start calibration" }),
     ).toBeEnabled({ timeout: 15_000 });
+    await window.getByRole("button", { name: "Start calibration" }).click();
+    try {
+      await expect
+        .poll(
+          async () =>
+            Number(
+              await window
+                .getByRole("progressbar")
+                .getAttribute("aria-valuenow"),
+            ),
+          { timeout: 30_000 },
+        )
+        .toBeGreaterThan(0);
+    } catch (error) {
+      console.error(
+        "Renderer state at inference timeout:",
+        await window.locator("body").innerText(),
+      );
+      throw error;
+    }
     await expect(window.locator("body")).not.toContainText("undefined");
   } finally {
     await app.close();

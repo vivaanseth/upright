@@ -73,9 +73,11 @@ export function useTrackingController() {
   const [calibrating, setCalibrating] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const frameCanvasRef = useRef<OffscreenCanvas | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const timerRef = useRef<number | null>(null);
   const frameBusyRef = useRef(false);
+  const frameFailureCountRef = useRef(0);
   const classifierRef = useRef(new PostureClassifier());
   const calibrationSamplesRef = useRef<PostureFeatures[]>([]);
   const calibrationStartedRef = useRef(0);
@@ -127,7 +129,6 @@ export function useTrackingController() {
     if (workerRef.current) return;
     const worker = new Worker(
       new URL("../workers/pose.worker.ts", import.meta.url),
-      { type: "module" },
     );
     workerRef.current = worker;
     worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
@@ -190,18 +191,42 @@ export function useTrackingController() {
           return;
         frameBusyRef.current = true;
         try {
-          const bitmap = await createImageBitmap(videoRef.current);
+          const video = videoRef.current;
+          let bitmap: ImageBitmap;
+          if (navigator.userAgent.includes("Linux")) {
+            const canvas =
+              frameCanvasRef.current ?? new OffscreenCanvas(640, 480);
+            frameCanvasRef.current = canvas;
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            const context = canvas.getContext("2d", { alpha: false });
+            if (!context)
+              throw new Error("A camera frame canvas could not be created.");
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            bitmap = canvas.transferToImageBitmap();
+          } else {
+            bitmap = await createImageBitmap(video);
+          }
           workerRef.current?.postMessage(
             { type: "frame", bitmap, timestamp: performance.now() },
             [bitmap],
           );
-        } catch {
+          frameFailureCountRef.current = 0;
+        } catch (error) {
           frameBusyRef.current = false;
+          frameFailureCountRef.current += 1;
+          if (frameFailureCountRef.current === 3) {
+            setCameraError(
+              `Camera frames could not be sampled: ${
+                error instanceof Error ? error.message : "unknown frame error"
+              }`,
+            );
+          }
         }
       },
       Math.round(1_000 / fps),
     );
-  }, [settings.reduceOnBattery, stopSampler]);
+  }, [setCameraError, settings.reduceOnBattery, stopSampler]);
 
   const openCamera = useCallback(
     async (cameraId?: string | null, allowFallback = true) => {
