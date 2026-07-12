@@ -1,7 +1,11 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
 const pkg = require("../package.json");
 const { flipFuses, FuseVersion, FuseV1Options } = require("@electron/fuses");
+
+const execFileAsync = promisify(execFile);
 
 async function exists(filePath) {
   try {
@@ -64,7 +68,40 @@ async function resolveExecutable(context, name) {
 
 exports.default = async function afterPack(context) {
   const name = context.packager.appInfo.productFilename;
+  const resourcesPath =
+    context.electronPlatformName === "darwin"
+      ? path.join(context.appOutDir, `${name}.app`, "Contents", "Resources")
+      : path.join(context.appOutDir, "resources");
+  await fs.rm(path.join(resourcesPath, "app-update.yml"), { force: true });
+
   if (context.electronPlatformName === "darwin") {
+    const appInfoPath = path.join(
+      context.appOutDir,
+      `${name}.app`,
+      "Contents",
+      "Info.plist",
+    );
+    const unusedUsageDescriptions = [
+      "NSAudioCaptureUsageDescription",
+      "NSBluetoothAlwaysUsageDescription",
+      "NSBluetoothPeripheralUsageDescription",
+      "NSMicrophoneUsageDescription",
+    ];
+    for (const key of unusedUsageDescriptions) {
+      try {
+        await execFileAsync("/usr/bin/plutil", ["-remove", key, appInfoPath]);
+      } catch {
+        // Electron versions do not always ship every default usage description.
+      }
+    }
+    await execFileAsync("/usr/bin/plutil", [
+      "-replace",
+      "NSAppTransportSecurity",
+      "-json",
+      JSON.stringify({ NSAllowsArbitraryLoads: false }),
+      appInfoPath,
+    ]);
+
     const frameworks = path.join(
       context.appOutDir,
       `${name}.app`,

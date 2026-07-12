@@ -770,10 +770,12 @@ select {
 .step-track {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
+  margin: 0;
   padding: 20px 30px;
   border-bottom: 1px solid var(--line);
+  list-style: none;
 }
-.step-track span {
+.step-track li {
   display: flex;
   align-items: center;
   gap: 7px;

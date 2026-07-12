@@ -4,54 +4,45 @@ on:
   push:
     tags:
       - "v*.*.*"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: SemVer without a leading v
-        required: false
-        type: string
-      draft:
-        description: Create the release as a draft
-        required: false
-        default: false
-        type: boolean
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 env:
   POSTURE_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+  VERSION: ${{ github.ref_name }}
 
 jobs:
   metadata:
     runs-on: ubuntu-24.04
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      draft: ${{ steps.version.outputs.draft }}
     steps:
-      - id: version
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Verify tag, package, and changelog versions
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            version="${GITHUB_REF_NAME#v}"
-            draft="false"
-          else
-            version="${{ inputs.version }}"
-            draft="${{ inputs.draft }}"
-          fi
-
+          version="${VERSION#v}"
+          package_version="$(node -p "require('./package.json').version")"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Version must be SemVer without a leading v." >&2
+            echo "Tag must be a semantic version such as v0.1.1." >&2
+            exit 1
+          fi
+          if [[ "$package_version" != "$version" ]]; then
+            echo "Tag $version does not match package.json $package_version." >&2
+            exit 1
+          fi
+          if ! grep -Fq "## $version -" CHANGELOG.md; then
+            echo "CHANGELOG.md has no $version release entry." >&2
             exit 1
           fi
 
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "draft=$draft" >> "$GITHUB_OUTPUT"
-
   build:
     needs: metadata
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -67,33 +58,51 @@ jobs:
             name: linux
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.5.3
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Set release version
-        shell: bash
-        run: npm version "${{ needs.metadata.outputs.version }}" --no-git-tag-version --allow-same-version
       - name: Install Linux packaging tools
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y rpm libarchive-tools
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Electron E2E
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            xvfb-run --auto-servernum pnpm test:e2e
+          else
+            pnpm test:e2e
+          fi
       - run: ${{ matrix.command }}
-      - uses: anchore/sbom-action@v0
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          path: .
+          path: dist
           format: cyclonedx-json
-          output-file: dist/Posture-${{ needs.metadata.outputs.version }}-${{ matrix.name }}-sbom.cdx.json
-      - uses: actions/attest-build-provenance@v2
+          output-file: dist/Posture-${{ github.ref_name }}-${{ matrix.name }}-sbom.cdx.json
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: dist/*
-      - uses: actions/upload-artifact@v4
+          subject-path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/*.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: posture-${{ matrix.name }}
           path: |
@@ -109,24 +118,56 @@ jobs:
 
   draft:
     needs: [metadata, build]
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: posture-*
           path: release-assets
           merge-multiple: true
-      - name: Generate checksums
+      - name: Verify exact artifact manifest
+        shell: bash
         working-directory: release-assets
-        run: find . -maxdepth 1 -type f ! -name SHASUMS256.txt -print0 | sort -z | xargs -0 sha256sum > SHASUMS256.txt
-      - name: Create GitHub release
+        run: |
+          version="${VERSION#v}"
+          expected=(
+            "Posture-${version}-mac-universal.dmg"
+            "Posture-${version}-mac-universal.zip"
+            "Posture-${version}-win-x64.exe"
+            "Posture-${version}-win-x64.zip"
+            "Posture-${version}-linux-x64.AppImage"
+            "Posture-${version}-linux-x64.deb"
+            "Posture-${version}-linux-x64.rpm"
+            "Posture-${version}-linux-x64.tar.gz"
+            "Posture-${VERSION}-macos-sbom.cdx.json"
+            "Posture-${VERSION}-windows-sbom.cdx.json"
+            "Posture-${VERSION}-linux-sbom.cdx.json"
+          )
+          mapfile -t actual < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
+          mapfile -t wanted < <(printf '%s\n' "${expected[@]}" | sort)
+          diff -u <(printf '%s\n' "${wanted[@]}") <(printf '%s\n' "${actual[@]}")
+      - name: Generate and verify checksums
+        shell: bash
+        working-directory: release-assets
+        run: |
+          find . -maxdepth 1 -type f -printf '%f\0' | sort -z | xargs -0 sha256sum > SHASUMS256.txt
+          sha256sum --check SHASUMS256.txt
+      - name: Create draft prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          args=(release create "v${{ needs.metadata.outputs.version }}" release-assets/* --generate-notes --title "Posture v${{ needs.metadata.outputs.version }}")
-          if [[ "${{ needs.metadata.outputs.draft }}" == "true" ]]; then
-            args+=(--draft)
+          version="${VERSION#v}"
+          notes="docs/releases/v${version}.md"
+          args=(release create "$VERSION" release-assets/* --draft --prerelease --title "Posture $VERSION")
+          if [[ -f "$notes" ]]; then
+            args+=(--notes-file "$notes")
+          else
+            args+=(--generate-notes)
           fi
           gh "${args[@]}"

@@ -98,6 +98,8 @@ The release workflow builds each operating system on a native GitHub runner. Sta
 
 Initial artifacts are intentionally unsigned. macOS Gatekeeper and Windows SmartScreen may display warnings. Automatic updates remain disabled until Apple Developer ID and Windows Authenticode signing are configured.
 
+If a camera does not appear during onboarding, follow the [camera troubleshooting guide](docs/troubleshooting-camera.md). Posture requests video only after the Privacy screen's Continue action and never requests microphone access.
+
 ## Compatibility and manual QA
 
 Before a stable release, test:

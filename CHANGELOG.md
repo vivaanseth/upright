@@ -2,6 +2,16 @@
 
 All notable changes follow semantic versioning.
 
+## 0.1.1 - 2026-07-12
+
+### Fixed
+
+- Request camera permission from an explicit onboarding action on macOS.
+- Populate the camera picker from both enumerated and active video devices.
+- Recover from stale saved camera identifiers by opening the default camera.
+- Restrict renderer trust and media permission checks to exact application origins.
+- Stop partial camera streams after setup failures and avoid unrelated login-item writes.
+
 ## 0.1.0 - 2026-07-12
 
 ### Added

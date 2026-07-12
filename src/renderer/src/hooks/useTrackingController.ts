@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   Calibration,
+  CameraAccessStatus,
   PostureFeatures,
   TrackingCommand,
 } from "../../../shared/contracts";
@@ -27,6 +28,31 @@ export interface CameraDevice {
   label: string;
 }
 
+export function normalizeCameraDevices(
+  devices: MediaDeviceInfo[],
+  activeStream?: MediaStream | null,
+): CameraDevice[] {
+  const cameras = devices
+    .filter((device) => device.kind === "videoinput")
+    .map((device, index) => ({
+      deviceId: device.deviceId,
+      label: device.label || `Camera ${index + 1}`,
+    }))
+    .filter((device) => device.deviceId);
+
+  const activeTrack = activeStream?.getVideoTracks()[0];
+  const activeSettings = activeTrack?.getSettings();
+  const activeId = activeSettings?.deviceId;
+  if (activeId && !cameras.some((device) => device.deviceId === activeId)) {
+    cameras.unshift({
+      deviceId: activeId,
+      label: activeTrack?.label || "Current camera",
+    });
+  }
+
+  return cameras;
+}
+
 export function useTrackingController() {
   const settings = useAppStore((state) => state.settings);
   const calibrations = useAppStore((state) => state.calibrations);
@@ -39,6 +65,8 @@ export function useTrackingController() {
 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [devices, setDevices] = useState<CameraDevice[]>([]);
+  const [cameraAccessStatus, setCameraAccessStatus] =
+    useState<CameraAccessStatus>("unknown");
   const [workerReady, setWorkerReady] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [calibrationError, setCalibrationError] = useState<string | null>(null);
@@ -61,19 +89,19 @@ export function useTrackingController() {
     Promise.resolve(),
   );
   const activeCalibrationRef = useRef<Calibration | null>(null);
-  const modeRef = useRef<"idle" | "tracking" | "calibrating">("idle");
+  const modeRef = useRef<"idle" | "preview" | "tracking" | "calibrating">(
+    "idle",
+  );
 
-  const refreshDevices = useCallback(async () => {
-    const all = await navigator.mediaDevices.enumerateDevices();
-    const cameras = all
-      .filter((device) => device.kind === "videoinput")
-      .map((device, index) => ({
-        deviceId: device.deviceId,
-        label: device.label || `Camera ${index + 1}`,
-      }));
-    setDevices(cameras);
-    return cameras;
-  }, []);
+  const refreshDevices = useCallback(
+    async (activeStream?: MediaStream | null) => {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      const cameras = normalizeCameraDevices(all, activeStream);
+      setDevices(cameras);
+      return cameras;
+    },
+    [],
+  );
 
   const stopSampler = useCallback(() => {
     if (timerRef.current !== null) window.clearInterval(timerRef.current);
@@ -89,6 +117,11 @@ export function useTrackingController() {
     });
     if (videoRef.current) videoRef.current.srcObject = null;
   }, [stopSampler]);
+
+  const closePreview = useCallback(() => {
+    if (modeRef.current !== "tracking") modeRef.current = "idle";
+    stopCamera();
+  }, [stopCamera]);
 
   const initializeWorker = useCallback(() => {
     if (workerRef.current) return;
@@ -171,12 +204,29 @@ export function useTrackingController() {
   }, [settings.reduceOnBattery, stopSampler]);
 
   const openCamera = useCallback(
-    async (cameraId?: string | null) => {
+    async (cameraId?: string | null, allowFallback = true) => {
       stopCamera();
       setCameraError(null);
-      initializeWorker();
+      let media: MediaStream | null = null;
       try {
-        const media = await navigator.mediaDevices.getUserMedia({
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new DOMException(
+            "This system does not expose camera access to Posture.",
+            "NotSupportedError",
+          );
+        }
+        const accessStatus = await window.posture.camera.requestAccess();
+        setCameraAccessStatus(accessStatus);
+        if (accessStatus !== "granted") {
+          const message =
+            accessStatus === "denied" || accessStatus === "restricted"
+              ? "Camera access is off. Allow Posture in your system privacy settings, then try again."
+              : "Camera access was not granted. Allow camera access to continue.";
+          setCameraError(message);
+          throw new DOMException(message, "NotAllowedError");
+        }
+        initializeWorker();
+        const constraints: MediaStreamConstraints = {
           audio: false,
           video: {
             deviceId: cameraId ? { exact: cameraId } : undefined,
@@ -184,7 +234,8 @@ export function useTrackingController() {
             height: { ideal: 480 },
             frameRate: { ideal: 30, max: 30 },
           },
-        });
+        };
+        media = await navigator.mediaDevices.getUserMedia(constraints);
         const video = document.createElement("video");
         video.autoplay = true;
         video.muted = true;
@@ -193,22 +244,43 @@ export function useTrackingController() {
         await video.play();
         videoRef.current = video;
         setStream(media);
-        const cameras = await refreshDevices();
+        const cameras = await refreshDevices(media);
         const activeId =
           media.getVideoTracks()[0]?.getSettings().deviceId ??
           cameras[0]?.deviceId ??
           null;
         if (activeId && activeId !== settings.selectedCameraId)
           await updateSettings({ selectedCameraId: activeId });
+        setCameraAccessStatus("granted");
+        if (modeRef.current === "idle") modeRef.current = "preview";
         startSampler();
         return activeId;
       } catch (error) {
+        media?.getTracks().forEach((track) => track.stop());
+        if (videoRef.current?.srcObject === media)
+          videoRef.current.srcObject = null;
+        setStream((current) => (current === media ? null : current));
+        stopSampler();
+        if (
+          allowFallback &&
+          cameraId &&
+          error instanceof DOMException &&
+          (error.name === "OverconstrainedError" ||
+            error.name === "NotFoundError")
+        ) {
+          await updateSettings({ selectedCameraId: null });
+          return openCamera(null, false);
+        }
+        if (error instanceof DOMException && error.name === "NotAllowedError")
+          setCameraAccessStatus("denied");
         const message =
           error instanceof DOMException && error.name === "NotAllowedError"
             ? "Camera access is off. Allow Posture in your system privacy settings, then try again."
             : error instanceof DOMException && error.name === "NotReadableError"
               ? "The camera is already in use by another application."
-              : "Posture could not open this camera. Check the connection and try again.";
+              : error instanceof DOMException && error.name === "NotFoundError"
+                ? "No camera was found. Connect a camera and try again."
+                : "Posture could not open this camera. Check the connection and try again.";
         setCameraError(message);
         throw error;
       }
@@ -220,15 +292,16 @@ export function useTrackingController() {
       settings.selectedCameraId,
       startSampler,
       stopCamera,
+      stopSampler,
       updateSettings,
     ],
   );
 
   const startTracking = useCallback(async () => {
     const cameraId = settings.selectedCameraId;
-    const calibration =
-      calibrations.find((entry) => entry.cameraId === cameraId) ??
-      calibrations[0];
+    const calibration = calibrations.find(
+      (entry) => entry.cameraId === cameraId,
+    );
     if (!calibration) {
       setCalibrationError("Calibrate your camera before starting a session.");
       return;
@@ -309,7 +382,6 @@ export function useTrackingController() {
   const selectCamera = useCallback(
     async (cameraId: string) => {
       await updateSettings({ selectedCameraId: cameraId });
-      await window.posture.calibrations.deleteForCamera(cameraId);
       if (stream?.active) await openCamera(cameraId);
     },
     [openCamera, stream?.active, updateSettings],
@@ -326,41 +398,62 @@ export function useTrackingController() {
     const unsubscribe = window.posture.tracking.onCommand(
       (command: TrackingCommand) => {
         if (command.type === "start" || command.type === "resume")
-          void startTrackingRef.current();
+          void startTrackingRef.current().catch(() => undefined);
         if (command.type === "pause" || command.type === "stop")
           pauseTrackingRef.current();
         if (command.type === "recalibrate") {
           setView("diagnostics");
-          void beginCalibrationRef.current();
+          void beginCalibrationRef.current().catch(() => undefined);
         }
-        if (command.type === "open-settings") setView("settings");
+        if (command.type === "open-settings") {
+          if (modeRef.current === "preview") closePreview();
+          setView("settings");
+        }
       },
     );
     const onDeviceChange = (): void => {
       void refreshDevices();
     };
     navigator.mediaDevices?.addEventListener("devicechange", onDeviceChange);
+    const onVisibilityChange = (): void => {
+      if (document.hidden && modeRef.current === "preview") closePreview();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       unsubscribe();
       navigator.mediaDevices?.removeEventListener(
         "devicechange",
         onDeviceChange,
       );
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       stopCamera();
       workerRef.current?.terminate();
       workerRef.current = null;
     };
-  }, [initializeWorker, refreshDevices, setView, stopCamera]);
+  }, [closePreview, initializeWorker, refreshDevices, setView, stopCamera]);
+
+  const openSystemPrivacySettings = useCallback(async () => {
+    try {
+      await window.posture.camera.openSystemPrivacySettings();
+    } catch {
+      setCameraError(
+        "Posture could not open camera settings. Open your system privacy settings manually.",
+      );
+    }
+  }, [setCameraError]);
 
   return {
     stream,
     devices,
+    cameraAccessStatus,
     workerReady,
     calibrating,
     calibrationProgress,
     calibrationError,
     openCamera,
     stopCamera,
+    closePreview,
+    openSystemPrivacySettings,
     startTracking,
     pauseTracking,
     beginCalibration,
