@@ -299,7 +299,7 @@ export function scorePosture(
   current: PostureFeatures,
   calibration: Calibration,
   sensitivity: Settings["sensitivity"],
-): { score: number; breakdown: MetricBreakdown } {
+): { score: number | null; breakdown: MetricBreakdown } {
   const multiplier = sensitivityMultiplier[sensitivity];
   const penalty = (deviation: number, tolerance: number): number =>
     clamp(deviation / (tolerance * multiplier), 0, 1);
@@ -379,13 +379,16 @@ export function scorePosture(
   );
   const score =
     availableWeight === 0
-      ? 0
+      ? null
       : weightedMetrics.reduce(
           (total, metric) => total + metric.value * metric.weight,
           0,
         ) / availableWeight;
 
-  return { score: Math.round(clamp(score, 0, 100)), breakdown };
+  return {
+    score: score === null ? null : Math.round(clamp(score, 0, 100)),
+    breakdown,
+  };
 }
 
 const messages: Record<PostureState, string> = {
@@ -433,6 +436,19 @@ export class PostureClassifier {
 
     this.lastReliableAt = now;
     const scored = scorePosture(features, calibration, settings.sensitivity);
+    if (scored.score === null) {
+      this.smoothedScore = null;
+      this.state = "unknown";
+      return this.snapshot(
+        "unknown",
+        null,
+        features.confidence,
+        inferenceMs,
+        sampledFps,
+        null,
+        now,
+      );
+    }
     const alpha = 1 - Math.exp(-deltaMs / 3_000);
     this.smoothedScore =
       this.smoothedScore === null

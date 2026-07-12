@@ -69,9 +69,35 @@ describe("posture scoring", () => {
 
   it("makes high sensitivity react more strongly than low sensitivity", () => {
     const current = { ...baseline, forwardHead: 0.28 };
-    expect(scorePosture(current, calibration, "high").score).toBeLessThan(
-      scorePosture(current, calibration, "low").score,
-    );
+    const high = scorePosture(current, calibration, "high").score;
+    const low = scorePosture(current, calibration, "low").score;
+    expect(high).not.toBeNull();
+    expect(low).not.toBeNull();
+    expect(high!).toBeLessThan(low!);
+  });
+
+  it("returns unavailable instead of Poor when no metric is reliable", () => {
+    const unreliable: Calibration = {
+      ...calibration,
+      reliability: {
+        forwardHead: 0,
+        lateralHeadTilt: 0,
+        shoulderSlope: 0,
+        verticalCompression: 0,
+        trunkLean: 0,
+      },
+    };
+    expect(scorePosture(baseline, unreliable, "balanced").score).toBeNull();
+    expect(
+      new PostureClassifier().update(
+        baseline,
+        unreliable,
+        defaultSettings,
+        12,
+        5,
+        1_000,
+      ).state,
+    ).toBe("unknown");
   });
 });
 
