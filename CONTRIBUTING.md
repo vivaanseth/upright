@@ -16,7 +16,9 @@ Thanks for helping improve Posture.
 2. Create a focused branch.
 3. Install with `pnpm install`.
 4. Make the smallest coherent change.
-5. Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build`.
+5. Run `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm scan:privacy`, and `pnpm build`.
 6. Add an Electron end-to-end test when changing the preload bridge, lifecycle, permissions, onboarding, or navigation.
+
+Run `pnpm test:coverage`, `pnpm audit:prod`, and `pnpm audit:licenses` before release branches or broad runtime changes.
 
 Do not commit real webcam captures, body images, user data, signing credentials, or release secrets.

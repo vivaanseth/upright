@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 
 const repositoryUrl =
-  process.env.POSTURE_REPOSITORY_URL ?? "https://github.com";
+  process.env.POSTURE_REPOSITORY_URL ?? "https://github.com/vivaanseth/Posture";
 const sourceMaps = process.env.POSTURE_SOURCE_MAPS === "true";
 
 export default defineConfig({

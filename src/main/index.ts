@@ -40,6 +40,7 @@ import {
   isTrustedRendererUrl,
   isVideoOnlyMediaRequest,
   resolveRendererAsset,
+  validateTrustedExternalUrl,
 } from "./security";
 import { LocalStore } from "./storage";
 
@@ -58,13 +59,14 @@ protocol.registerSchemesAsPrivileged([
 
 const RENDERER_ROOT = join(__dirname, "../renderer");
 const PRELOAD_PATH = join(__dirname, "../preload/index.js");
-const repositoryUrl = __POSTURE_REPOSITORY_URL__.replace(/\/$/, "");
+const repositoryUrl = validateTrustedExternalUrl(__POSTURE_REPOSITORY_URL__);
 const trustedUrls: Record<TrustedUrlKind, string> = {
   repository: repositoryUrl,
-  releases: `${repositoryUrl}/releases`,
-  privacy: `${repositoryUrl}/blob/main/PRODUCT.md`,
-  mediapipe:
+  releases: validateTrustedExternalUrl(`${repositoryUrl}/releases`),
+  privacy: validateTrustedExternalUrl(`${repositoryUrl}/blob/main/PRODUCT.md`),
+  mediapipe: validateTrustedExternalUrl(
     "https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker",
+  ),
 };
 
 let mainWindow: BrowserWindow | null = null;

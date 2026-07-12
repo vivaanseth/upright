@@ -76,6 +76,10 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm test:coverage
+      - run: pnpm scan:privacy
+      - run: pnpm audit:prod
+      - run: pnpm audit:licenses
       - run: pnpm build
       - name: Electron E2E
         shell: bash
@@ -86,6 +90,7 @@ jobs:
             pnpm test:e2e
           fi
       - run: ${{ matrix.command }}
+      - run: pnpm verify:built-package dist
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           path: dist

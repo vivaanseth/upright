@@ -60,6 +60,18 @@ describe("SessionAccumulator", () => {
     session.update(snapshot("good", 60_000, 90));
     expect(session.getSummary().trackedMs).toBe(0);
   });
+
+  it("ends sessions with explicit wall-clock timestamps", () => {
+    const session = new SessionAccumulator(
+      "00000000-0000-4000-8000-000000000000",
+      new Date("2026-07-11T12:00:00.000Z"),
+    );
+    const ended = session.end(new Date("2026-07-11T12:05:00.000Z"));
+    expect(ended).toMatchObject({
+      endedAt: "2026-07-11T12:05:00.000Z",
+      updatedAt: "2026-07-11T12:05:00.000Z",
+    });
+  });
 });
 
 describe("ReminderPolicy", () => {
@@ -94,5 +106,24 @@ describe("ReminderPolicy", () => {
     policy.suspend();
     policy.update(snapshot("poor", 200_000, 30), 30, 10);
     expect(policy.update(snapshot("poor", 210_000, 30), 30, 10)).toBe(false);
+  });
+
+  it("does not duplicate reminders during cooldown", () => {
+    const policy = new ReminderPolicy(0);
+    policy.update(snapshot("poor", 61_000, 30), 15, 10);
+    expect(policy.update(snapshot("poor", 76_001, 30), 15, 10)).toBe(true);
+    policy.update(snapshot("poor", 80_000, 30), 15, 10);
+    expect(policy.update(snapshot("poor", 96_000, 30), 15, 10)).toBe(false);
+    expect(policy.update(snapshot("poor", 700_000, 30), 15, 10)).toBe(true);
+  });
+
+  it("clears poor accumulation for unknown and away states", () => {
+    const policy = new ReminderPolicy(0);
+    policy.update(snapshot("poor", 61_000, 30), 30, 10);
+    policy.update(snapshot("poor", 80_000, 30), 30, 10);
+    policy.update(snapshot("unknown", 81_000, null), 30, 10);
+    expect(policy.update(snapshot("poor", 93_001, 30), 30, 10)).toBe(false);
+    policy.update(snapshot("away", 94_000, null), 30, 10);
+    expect(policy.update(snapshot("poor", 125_001, 30), 30, 10)).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type {
+  Calibration,
   SessionSummary,
   StorageRecoveryNotice,
 } from "../shared/contracts";
@@ -41,6 +42,46 @@ const session = (index: number): SessionSummary => ({
   recovered: false,
 });
 
+const calibration = (
+  index: number,
+  cameraId = `camera-${index}`,
+): Calibration => ({
+  schemaVersion: 2,
+  id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+  cameraId,
+  createdAt: new Date(Date.now() - index * 1_000).toISOString(),
+  modelVersion: "test",
+  scoringConfigVersion: "test",
+  resolution: { width: 640, height: 480 },
+  orientation: "landscape",
+  baseline: {
+    forwardHead: 0.2,
+    lateralHeadTilt: 0,
+    shoulderSlope: 0,
+    verticalCompression: 1.2,
+    trunkLean: 0,
+    confidence: 0.95,
+  },
+  medianAbsoluteDeviation: {
+    forwardHead: 0.01,
+    lateralHeadTilt: 0.2,
+    shoulderSlope: 0.2,
+    verticalCompression: 0.01,
+    trunkLean: 0.2,
+    confidence: 0.01,
+  },
+  reliability: {
+    forwardHead: 1,
+    lateralHeadTilt: 1,
+    shoulderSlope: 1,
+    verticalCompression: 1,
+    trunkLean: 1,
+  },
+  validFrameCount: 50,
+  rejectedFrameCount: 0,
+  compatibility: "compatible",
+});
+
 afterEach(async () => {
   await Promise.all(
     temporaryRoots
@@ -50,6 +91,16 @@ afterEach(async () => {
 });
 
 describe("LocalStore", () => {
+  it("returns safe defaults when files do not exist", async () => {
+    const { store } = await createStore();
+    await expect(store.getSettings()).resolves.toMatchObject({
+      theme: "system",
+      onboardingComplete: false,
+    });
+    await expect(store.getCalibrations()).resolves.toEqual([]);
+    await expect(store.getSessions()).resolves.toEqual([]);
+  });
+
   it("serializes concurrent settings updates without losing fields", async () => {
     const { store } = await createStore();
     await Promise.all([
@@ -62,6 +113,40 @@ describe("LocalStore", () => {
       soundEnabled: true,
       cooldownMinutes: 20,
     });
+  });
+
+  it("keeps the write queue usable after a rejected write", async () => {
+    const { store } = await createStore();
+    await expect(
+      store.updateSettings({ theme: "purple" } as never),
+    ).rejects.toBeTruthy();
+    await expect(
+      store.updateSettings({ theme: "dark" }),
+    ).resolves.toMatchObject({ theme: "dark" });
+    await expect(store.flush()).resolves.toBeUndefined();
+  });
+
+  it("replaces calibrations by exact camera and deletes selected cameras", async () => {
+    const { store } = await createStore();
+    await store.saveCalibration(calibration(1, "camera-a"));
+    await store.saveCalibration(calibration(2, "camera-b"));
+    const replaced = await store.saveCalibration(calibration(3, "camera-a"));
+    expect(replaced.map((entry) => entry.cameraId)).toEqual([
+      "camera-a",
+      "camera-b",
+    ]);
+    expect(replaced[0].id).toBe(calibration(3, "camera-a").id);
+
+    const remaining = await store.deleteCalibrationForCamera("camera-a");
+    expect(remaining.map((entry) => entry.cameraId)).toEqual(["camera-b"]);
+  });
+
+  it("caps saved calibrations to the twelve most recent cameras", async () => {
+    const { store } = await createStore();
+    for (let index = 0; index < 14; index += 1) {
+      await store.saveCalibration(calibration(index));
+    }
+    await expect(store.getCalibrations()).resolves.toHaveLength(12);
   });
 
   it("quarantines corrupt data once and persists safe defaults", async () => {
@@ -79,6 +164,18 @@ describe("LocalStore", () => {
     ).toHaveLength(1);
   });
 
+  it("recovers corrupt session data during an active write", async () => {
+    const notices: StorageRecoveryNotice[] = [];
+    const { root, store } = await createStore((notice) => notices.push(notice));
+    await writeFile(join(root, "sessions.json"), "{not-json", "utf8");
+    const saved = await store.saveSession(session(1));
+    expect(saved).toHaveLength(1);
+    expect(notices).toHaveLength(1);
+    expect(
+      (await readdir(root)).filter((file) => file.includes(".corrupt-")),
+    ).toHaveLength(1);
+  });
+
   it("enforces the 500-session retention cap", async () => {
     const { root, store } = await createStore();
     await writeFile(
@@ -91,6 +188,19 @@ describe("LocalStore", () => {
     const saved = await store.saveSession(session(0));
     expect(saved).toHaveLength(500);
     expect(saved[0].id).toBe(session(0).id);
+  });
+
+  it("removes sessions older than ninety days", async () => {
+    const { store } = await createStore();
+    const recent = session(1);
+    const old = {
+      ...session(2),
+      id: "00000000-0000-4000-8000-999999999999",
+      startedAt: new Date(Date.now() - 91 * 24 * 60 * 60 * 1_000).toISOString(),
+    };
+    await store.saveSession(old);
+    const saved = await store.saveSession(recent);
+    expect(saved.map((entry) => entry.id)).toEqual([recent.id]);
   });
 
   it("migrates V1 sessions without inventing recovery state", async () => {
@@ -138,5 +248,53 @@ describe("LocalStore", () => {
       false,
     );
     expect(JSON.parse(exported)).toMatchObject({ schemaVersion: 2 });
+  });
+
+  it("cleans temporary export files when atomic replacement fails", async () => {
+    const { root, store } = await createStore();
+    await expect(store.exportData(root)).rejects.toBeTruthy();
+    expect(
+      (await readdir(root)).filter((file) => file.endsWith(".tmp")),
+    ).toEqual([]);
+  });
+
+  it("retries atomic replacement failures on Windows", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32",
+    });
+    try {
+      const { root, store } = await createStore();
+      await expect(store.exportData(root)).rejects.toBeTruthy();
+      expect(
+        (await readdir(root)).filter((file) => file.endsWith(".tmp")),
+      ).toEqual([]);
+    } finally {
+      Object.defineProperty(process, "platform", {
+        configurable: true,
+        value: originalPlatform,
+      });
+    }
+  });
+
+  it("deletes sessions and resets every local data file", async () => {
+    const { root, store } = await createStore();
+    await store.updateSettings({ theme: "dark" });
+    await store.saveCalibration(calibration(1));
+    await store.saveSession(session(1));
+
+    await store.deleteSessions();
+    await expect(store.getSessions()).resolves.toEqual([]);
+
+    await store.resetAll();
+    await expect(store.getSettings()).resolves.toMatchObject({
+      theme: "system",
+    });
+    await expect(store.getCalibrations()).resolves.toEqual([]);
+    await expect(store.getSessions()).resolves.toEqual([]);
+    expect(
+      (await readdir(root)).filter((file) => file.endsWith(".json")),
+    ).toEqual([]);
   });
 });

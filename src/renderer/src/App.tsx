@@ -137,7 +137,7 @@ export function App(): React.JSX.Element {
         {store.view === "settings" && (
           <Settings
             settings={store.settings}
-            version={store.appInfo?.version ?? "0.1.1"}
+            version={store.appInfo?.version ?? "0.5.0"}
             calibrations={store.calibrations}
             onUpdate={store.updateSettings}
             onOpenDiagnostics={() => store.setView("diagnostics")}

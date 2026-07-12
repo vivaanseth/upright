@@ -61,3 +61,18 @@ export function isVideoOnlyMediaRequest(
   if (!mediaTypes || mediaTypes.length === 0) return true;
   return mediaTypes.every((type) => type === "video");
 }
+
+export function validateTrustedExternalUrl(input: string): string {
+  const url = new URL(input);
+  const isTrustedHost =
+    url.hostname === "github.com" || url.hostname === "developers.google.com";
+  if (
+    url.protocol !== "https:" ||
+    !isTrustedHost ||
+    url.username ||
+    url.password
+  ) {
+    throw new Error(`Untrusted external URL configured for Posture: ${input}`);
+  }
+  return url.toString().replace(/\/$/, "");
+}
