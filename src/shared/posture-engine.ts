@@ -26,6 +26,33 @@ const indexes = {
   rightHip: 24,
 };
 
+export const calibrationRejectionReasons = [
+  "insufficient-frames",
+  "low-confidence",
+  "too-close",
+  "too-far",
+  "off-center",
+  "excessive-motion",
+  "head-occluded",
+  "shoulders-occluded",
+  "unstable-tilt",
+  "unstable-trunk",
+  "camera-disconnected",
+] as const;
+
+export type CalibrationRejectionReason =
+  (typeof calibrationRejectionReasons)[number];
+
+export class CalibrationError extends Error {
+  readonly reason: CalibrationRejectionReason;
+
+  constructor(reason: CalibrationRejectionReason, message: string) {
+    super(message);
+    this.name = "CalibrationError";
+    this.reason = reason;
+  }
+}
+
 const confidenceOf = (landmark: Landmark | undefined): number =>
   Math.min(landmark?.visibility ?? 1, landmark?.presence ?? 1);
 
@@ -93,6 +120,9 @@ export function extractPostureFeatures(
     confidence: hips
       ? Math.min(requiredConfidence, confidenceOf(hips))
       : requiredConfidence,
+    shoulderWidth,
+    centerOffset: shoulders.x - 0.5,
+    lateralHeadTiltReliable: Boolean(earsReliable),
   };
 }
 
@@ -112,10 +142,21 @@ export function buildCalibration(
   cameraId: string,
   resolution: { width: number; height: number },
   modelVersion = "pose-landmarker-lite-0.10.35",
+  sampling: { elapsedMs: number; rejectedFrameCount: number } = {
+    elapsedMs: 10_000,
+    rejectedFrameCount: 0,
+  },
 ): Calibration {
-  if (samples.length < 25)
-    throw new Error(
+  if (sampling.elapsedMs < 10_000 || samples.length < 25)
+    throw new CalibrationError(
+      "insufficient-frames",
       "Hold still a little longer so Posture can find a stable baseline.",
+    );
+  const totalFrameCount = samples.length + sampling.rejectedFrameCount;
+  if (samples.length / Math.max(1, totalFrameCount) < 0.65)
+    throw new CalibrationError(
+      "low-confidence",
+      "Posture could not see your head and shoulders consistently. Improve the lighting and keep them in view.",
     );
 
   const requiredKeys = [
@@ -145,29 +186,99 @@ export function buildCalibration(
       ? null
       : medianAbsoluteDeviation(trunkValues, baseline.trunkLean);
 
+  const shoulderWidths = samples.flatMap((sample) =>
+    sample.shoulderWidth === undefined ? [] : [sample.shoulderWidth],
+  );
+  const medianShoulderWidth =
+    shoulderWidths.length > 0 ? median(shoulderWidths) : null;
+  if (medianShoulderWidth !== null && medianShoulderWidth < 0.12)
+    throw new CalibrationError(
+      "too-far",
+      "Move a little closer so your head and shoulders are easier to see.",
+    );
+  if (medianShoulderWidth !== null && medianShoulderWidth > 0.55)
+    throw new CalibrationError(
+      "too-close",
+      "Move a little farther away so your head and shoulders fit comfortably in view.",
+    );
+
+  const centerOffsets = samples.flatMap((sample) =>
+    sample.centerOffset === undefined ? [] : [sample.centerOffset],
+  );
+  if (centerOffsets.length > 0 && Math.abs(median(centerOffsets)) > 0.2)
+    throw new CalibrationError(
+      "off-center",
+      "Center yourself in the camera guide, then try calibration again.",
+    );
+
   if (baseline.confidence < REQUIRED_CONFIDENCE)
-    throw new Error(
+    throw new CalibrationError(
+      "low-confidence",
       "Posture cannot see your head and shoulders clearly enough.",
+    );
+  if (variance.lateralHeadTilt > 3.5)
+    throw new CalibrationError(
+      "unstable-tilt",
+      "Keep your head naturally level during calibration, then try again.",
+    );
+  if (variance.trunkLean !== null && variance.trunkLean > 4)
+    throw new CalibrationError(
+      "unstable-trunk",
+      "Keep your upper body comfortably still during calibration, then try again.",
     );
   if (
     variance.forwardHead > 0.08 ||
     variance.shoulderSlope > 3.5 ||
     variance.verticalCompression > 0.08
   ) {
-    throw new Error(
+    throw new CalibrationError(
+      "excessive-motion",
       "There was too much movement during calibration. Sit naturally and try again.",
     );
   }
 
+  const reliabilityFromVariance = (
+    deviation: number | null,
+    tolerance: number,
+  ): number =>
+    deviation === null
+      ? 0
+      : clamp(1 - deviation / Math.max(tolerance, 0.001), 0, 1);
+  const reliableTiltRatio =
+    samples.filter((sample) => sample.lateralHeadTiltReliable).length /
+    samples.length;
+
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: crypto.randomUUID(),
     cameraId,
     createdAt: new Date().toISOString(),
     modelVersion,
+    scoringConfigVersion: "posture-scoring-v1",
     resolution,
+    orientation:
+      resolution.width === resolution.height
+        ? "unknown"
+        : resolution.width > resolution.height
+          ? "landscape"
+          : "portrait",
     baseline,
-    variance,
+    medianAbsoluteDeviation: variance,
+    reliability: {
+      forwardHead: reliabilityFromVariance(variance.forwardHead, 0.08),
+      lateralHeadTilt:
+        reliabilityFromVariance(variance.lateralHeadTilt, 3.5) *
+        reliableTiltRatio,
+      shoulderSlope: reliabilityFromVariance(variance.shoulderSlope, 3.5),
+      verticalCompression: reliabilityFromVariance(
+        variance.verticalCompression,
+        0.08,
+      ),
+      trunkLean: reliabilityFromVariance(variance.trunkLean, 4),
+    },
+    validFrameCount: samples.length,
+    rejectedFrameCount: sampling.rejectedFrameCount,
+    compatibility: "compatible",
   };
 }
 
@@ -236,11 +347,43 @@ export function scorePosture(
     upperBody: Math.round((1 - upperPenalty) * 100),
   };
 
+  const weightedMetrics = [
+    {
+      value: breakdown.forwardHead,
+      weight: 0.45,
+      reliable: calibration.reliability.forwardHead >= 0.25,
+    },
+    {
+      value: breakdown.lateralHeadTilt,
+      weight: 0.2,
+      reliable: calibration.reliability.lateralHeadTilt >= 0.25,
+    },
+    {
+      value: breakdown.shoulderSlope,
+      weight: 0.15,
+      reliable: calibration.reliability.shoulderSlope >= 0.25,
+    },
+    {
+      value: breakdown.upperBody,
+      weight: 0.2,
+      reliable:
+        Math.max(
+          calibration.reliability.verticalCompression,
+          calibration.reliability.trunkLean,
+        ) >= 0.25,
+    },
+  ].filter((metric) => metric.reliable);
+  const availableWeight = weightedMetrics.reduce(
+    (total, metric) => total + metric.weight,
+    0,
+  );
   const score =
-    breakdown.forwardHead * 0.45 +
-    breakdown.lateralHeadTilt * 0.2 +
-    breakdown.shoulderSlope * 0.15 +
-    breakdown.upperBody * 0.2;
+    availableWeight === 0
+      ? 0
+      : weightedMetrics.reduce(
+          (total, metric) => total + metric.value * metric.weight,
+          0,
+        ) / availableWeight;
 
   return { score: Math.round(clamp(score, 0, 100)), breakdown };
 }

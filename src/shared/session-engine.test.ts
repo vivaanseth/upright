@@ -37,10 +37,28 @@ describe("SessionAccumulator", () => {
     const session = new SessionAccumulator(null);
     session.update(snapshot("good", 1_000, 90));
     session.update(snapshot("caution", 2_000, 70));
+    session.update(snapshot("caution", 3_000, 70));
     session.recordReminder();
     const summary = session.getSummary();
     expect(summary.averageScore).toBe(80);
     expect(summary.reminderCount).toBe(1);
+  });
+
+  it("weights score by elapsed time instead of inference sample count", () => {
+    const session = new SessionAccumulator(null);
+    session.update(snapshot("good", 0, 90));
+    session.update(snapshot("good", 100, 90));
+    session.update(snapshot("poor", 200, 10));
+    session.update(snapshot("poor", 1_200, 10));
+    expect(session.getSummary().averageScore).toBe(23);
+  });
+
+  it("does not inflate time across an explicit suspension", () => {
+    const session = new SessionAccumulator(null);
+    session.update(snapshot("good", 1_000, 90));
+    session.suspend();
+    session.update(snapshot("good", 60_000, 90));
+    expect(session.getSummary().trackedMs).toBe(0);
   });
 });
 
@@ -58,5 +76,23 @@ describe("ReminderPolicy", () => {
     policy.update(snapshot("good", 70_000, 90), 30, 10);
     policy.update(snapshot("good", 76_000, 90), 30, 10);
     expect(policy.update(snapshot("poor", 80_000, 30), 30, 10)).toBe(false);
+  });
+
+  it("preserves poor accumulation through a brief recovery", () => {
+    const policy = new ReminderPolicy(0);
+    policy.update(snapshot("poor", 61_000, 30), 30, 10);
+    policy.update(snapshot("poor", 81_000, 30), 30, 10);
+    policy.update(snapshot("good", 82_000, 90), 30, 10);
+    policy.update(snapshot("poor", 83_000, 30), 30, 10);
+    expect(policy.update(snapshot("poor", 93_001, 30), 30, 10)).toBe(true);
+  });
+
+  it("suspends timing across sleep or pause", () => {
+    const policy = new ReminderPolicy(0);
+    policy.update(snapshot("poor", 61_000, 30), 30, 10);
+    policy.update(snapshot("poor", 80_000, 30), 30, 10);
+    policy.suspend();
+    policy.update(snapshot("poor", 200_000, 30), 30, 10);
+    expect(policy.update(snapshot("poor", 210_000, 30), 30, 10)).toBe(false);
   });
 });

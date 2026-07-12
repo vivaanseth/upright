@@ -3,8 +3,11 @@ import type {
   Calibration,
   CameraAccessStatus,
   PostureApi,
+  PowerState,
   Settings,
+  StorageRecoveryNotice,
   TrackingCommand,
+  TrackingRuntimeState,
   TrackingSnapshot,
   TrustedUrlKind,
 } from "../shared/contracts";
@@ -27,9 +30,49 @@ function parseCameraAccessStatus(value: unknown): CameraAccessStatus {
   throw new TypeError("Received an invalid camera access status.");
 }
 
+function parsePowerState(value: unknown): PowerState {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as PowerState).onBattery === "boolean" &&
+    typeof (value as PowerState).updatedAt === "number" &&
+    Number.isFinite((value as PowerState).updatedAt)
+  ) {
+    return value as PowerState;
+  }
+  throw new TypeError("Received an invalid power state.");
+}
+
+function parseStorageRecoveryNotice(value: unknown): StorageRecoveryNotice {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    (value as StorageRecoveryNotice).schemaVersion === 1 &&
+    ["settings.json", "calibrations.json", "sessions.json"].includes(
+      (value as StorageRecoveryNotice).file,
+    ) &&
+    typeof (value as StorageRecoveryNotice).backupPath === "string" &&
+    typeof (value as StorageRecoveryNotice).recoveredAt === "string"
+  ) {
+    return value as StorageRecoveryNotice;
+  }
+  throw new TypeError("Received an invalid storage recovery notice.");
+}
+
 const api: PostureApi = {
   app: {
     getInfo: () => ipcRenderer.invoke("app:get-info"),
+    getPowerState: async () =>
+      parsePowerState(await ipcRenderer.invoke("app:get-power-state")),
+    onPowerStateChanged: (listener: (state: PowerState) => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        state: unknown,
+      ): void => listener(parsePowerState(state));
+      ipcRenderer.on("app:power-state-changed", handler);
+      return () =>
+        ipcRenderer.removeListener("app:power-state-changed", handler);
+    },
     openExternalTrustedUrl: (kind: TrustedUrlKind) =>
       ipcRenderer.invoke("app:open-url", kind),
   },
@@ -52,6 +95,8 @@ const api: PostureApi = {
     stop: () => ipcRenderer.invoke("tracking:stop"),
     reportSnapshot: (snapshot: TrackingSnapshot) =>
       ipcRenderer.send("tracking:snapshot", snapshot),
+    reportRuntimeState: (state: TrackingRuntimeState) =>
+      ipcRenderer.send("tracking:runtime-state", state),
     onCommand: (listener: (command: TrackingCommand) => void) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
@@ -81,6 +126,24 @@ const api: PostureApi = {
     export: () => ipcRenderer.invoke("data:export"),
     deleteSessions: () => ipcRenderer.invoke("data:delete-sessions"),
     resetAll: () => ipcRenderer.invoke("data:reset-all"),
+  },
+  storage: {
+    getRecoveries: async () => {
+      const notices: unknown = await ipcRenderer.invoke(
+        "storage:get-recoveries",
+      );
+      if (!Array.isArray(notices))
+        throw new TypeError("Received invalid storage recovery history.");
+      return notices.map(parseStorageRecoveryNotice);
+    },
+    onRecovery: (listener: (notice: StorageRecoveryNotice) => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        notice: unknown,
+      ): void => listener(parseStorageRecoveryNotice(notice));
+      ipcRenderer.on("storage:recovery", handler);
+      return () => ipcRenderer.removeListener("storage:recovery", handler);
+    },
   },
   window: {
     hide: () => ipcRenderer.invoke("window:hide"),

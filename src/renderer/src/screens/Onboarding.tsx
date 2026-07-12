@@ -208,7 +208,13 @@ export function Onboarding({
                 aria-valuenow={progress}
                 aria-label={`Calibration ${progress}% complete`}
               >
-                <span style={{ width: `${progress}%` }} />
+                <span
+                  style={
+                    {
+                      "--progress-scale": progress / 100,
+                    } as React.CSSProperties
+                  }
+                />
               </div>
               <button
                 className="button button-primary"

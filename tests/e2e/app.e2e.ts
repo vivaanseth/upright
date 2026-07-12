@@ -66,6 +66,16 @@ test("launches the secure onboarding flow", async () => {
     await expect(
       window.getByRole("button", { name: "Start calibration" }),
     ).toBeEnabled({ timeout: 15_000 });
+    await window.getByRole("button", { name: "Start calibration" }).click();
+    await expect
+      .poll(
+        async () =>
+          Number(
+            await window.getByRole("progressbar").getAttribute("aria-valuenow"),
+          ),
+        { timeout: 8_000 },
+      )
+      .toBeGreaterThan(0);
     await expect(window.locator("body")).not.toContainText("undefined");
   } finally {
     await app.close();

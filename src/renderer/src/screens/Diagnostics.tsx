@@ -81,9 +81,19 @@ export function Diagnostics({
           {calibrating && (
             <div
               className="calibration-progress"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
               aria-label={`Calibration ${progress}% complete`}
             >
-              <span style={{ width: `${progress}%` }} />
+              <span
+                style={
+                  {
+                    "--progress-scale": progress / 100,
+                  } as React.CSSProperties
+                }
+              />
             </div>
           )}
           {error && (

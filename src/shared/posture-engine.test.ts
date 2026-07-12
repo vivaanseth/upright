@@ -6,6 +6,7 @@ import {
 } from "./contracts";
 import {
   buildCalibration,
+  CalibrationError,
   PostureClassifier,
   scorePosture,
 } from "./posture-engine";
@@ -20,14 +21,16 @@ const baseline: PostureFeatures = {
 };
 
 const calibration: Calibration = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   id: "00000000-0000-4000-8000-000000000000",
   cameraId: "camera-1",
   createdAt: "2026-07-11T12:00:00.000Z",
   modelVersion: "test",
+  scoringConfigVersion: "test-scoring",
   resolution: { width: 640, height: 480 },
+  orientation: "landscape",
   baseline,
-  variance: {
+  medianAbsoluteDeviation: {
     forwardHead: 0.01,
     lateralHeadTilt: 0.2,
     shoulderSlope: 0.2,
@@ -35,6 +38,16 @@ const calibration: Calibration = {
     trunkLean: 0.2,
     confidence: 0.01,
   },
+  reliability: {
+    forwardHead: 1,
+    lateralHeadTilt: 1,
+    shoulderSlope: 1,
+    verticalCompression: 1,
+    trunkLean: 1,
+  },
+  validFrameCount: 50,
+  rejectedFrameCount: 0,
+  compatibility: "compatible",
 };
 
 describe("posture scoring", () => {
@@ -89,6 +102,35 @@ describe("calibration", () => {
     expect(() =>
       buildCalibration(samples, "camera-1", { width: 640, height: 480 }),
     ).toThrow(/movement/i);
+  });
+
+  it("returns typed framing rejection reasons", () => {
+    const samples = Array.from({ length: 50 }, () => ({
+      ...baseline,
+      shoulderWidth: 0.6,
+      centerOffset: 0,
+      lateralHeadTiltReliable: true,
+    }));
+    try {
+      buildCalibration(samples, "camera-1", { width: 640, height: 480 });
+      throw new Error("Expected calibration to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CalibrationError);
+      expect((error as CalibrationError).reason).toBe("too-close");
+    }
+  });
+
+  it("requires ten seconds of elapsed calibration time", () => {
+    const samples = Array.from({ length: 50 }, () => baseline);
+    expect(() =>
+      buildCalibration(
+        samples,
+        "camera-1",
+        { width: 640, height: 480 },
+        "test",
+        { elapsedMs: 9_999, rejectedFrameCount: 0 },
+      ),
+    ).toThrowError(CalibrationError);
   });
 });
 

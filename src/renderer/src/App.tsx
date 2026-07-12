@@ -16,6 +16,7 @@ export function App(): React.JSX.Element {
   const controller = useTrackingController();
   const initialize = store.initialize;
   const refreshSessions = store.refreshSessions;
+  const setStorageRecovery = store.setStorageRecovery;
 
   useEffect(() => {
     void initialize();
@@ -29,11 +30,18 @@ export function App(): React.JSX.Element {
     const timer = window.setInterval(() => void refreshSessions(), 1_000);
     return () => window.clearInterval(timer);
   }, [refreshSessions, store.initialized]);
+  useEffect(
+    () => window.posture.storage.onRecovery(setStorageRecovery),
+    [setStorageRecovery],
+  );
 
   if (!store.initialized) return <LoadingScreen />;
 
   const selectedCalibration = store.calibrations.find(
-    (item) => item.cameraId === store.settings.selectedCameraId,
+    (item) =>
+      item.schemaVersion === 2 &&
+      item.compatibility === "compatible" &&
+      item.cameraId === store.settings.selectedCameraId,
   );
 
   if (!store.settings.onboardingComplete) {
@@ -82,13 +90,27 @@ export function App(): React.JSX.Element {
         }}
       />
       <main className="content-shell">
+        {store.storageRecovery && (
+          <div className="recovery-banner" role="status">
+            <span>
+              Posture recovered a damaged local {store.storageRecovery.file}{" "}
+              file and kept a quarantined backup.
+            </span>
+            <button
+              className="text-button"
+              onClick={() => store.setStorageRecovery(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         {store.view === "dashboard" && (
           <Dashboard
             snapshot={store.snapshot}
             session={store.session}
-            tracking={store.tracking}
+            trackingMode={store.trackingMode}
             onToggle={() => {
-              void (store.tracking
+              void (["tracking", "recovering"].includes(store.trackingMode)
                 ? window.posture.tracking.pause("user")
                 : window.posture.tracking.start());
             }}
@@ -116,7 +138,23 @@ export function App(): React.JSX.Element {
           <Settings
             settings={store.settings}
             version={store.appInfo?.version ?? "0.1.1"}
-            onUpdate={(patch) => void store.updateSettings(patch)}
+            calibrations={store.calibrations}
+            onUpdate={store.updateSettings}
+            onOpenDiagnostics={() => store.setView("diagnostics")}
+            onExport={() => window.posture.data.export()}
+            onDeleteSessions={store.deleteSessions}
+            onDeleteCalibration={async (cameraId) => {
+              if (cameraId === store.settings.selectedCameraId) {
+                await window.posture.tracking.pause("calibration-deleted");
+                controller.closePreview();
+              }
+              await store.deleteCalibration(cameraId);
+            }}
+            onResetAll={async () => {
+              await window.posture.tracking.pause("reset");
+              controller.closePreview();
+              await store.resetAll();
+            }}
           />
         )}
       </main>

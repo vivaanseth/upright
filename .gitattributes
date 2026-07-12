@@ -5,3 +5,4 @@
 *.png binary
 *.task binary
 *.wasm binary
+src/renderer/public/wasm/*.js whitespace=-trailing-space,-blank-at-eof
