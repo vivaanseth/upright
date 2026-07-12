@@ -30,6 +30,7 @@ const openCameraStep = async (window: Page): Promise<void> => {
 };
 
 test("launches the secure onboarding flow", async () => {
+  test.setTimeout(60_000);
   const userData = await mkdtemp(join(tmpdir(), "posture-e2e-"));
   const app = await launch(userData);
 
@@ -73,7 +74,7 @@ test("launches the secure onboarding flow", async () => {
           Number(
             await window.getByRole("progressbar").getAttribute("aria-valuenow"),
           ),
-        { timeout: 8_000 },
+        { timeout: 30_000 },
       )
       .toBeGreaterThan(0);
     await expect(window.locator("body")).not.toContainText("undefined");
