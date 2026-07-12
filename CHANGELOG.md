@@ -2,6 +2,20 @@
 
 All notable changes follow semantic versioning.
 
+## 0.1.2 - 2026-07-12
+
+### Fixed
+
+- Restore every pinned MediaPipe loader and WASM asset byte-for-byte, including the no-SIMD fallback.
+- Initialize MediaPipe from its bundled loader in a classic worker and close every transferred frame.
+- Permit WebAssembly compilation in the otherwise strict application Content Security Policy.
+- Verify a real pose-inference result during Electron end-to-end testing.
+- Match Linux release artifact names emitted by native DEB, RPM, and AppImage builders.
+
+### Release note
+
+- `v0.1.1` was never published because release validation found the inference-runtime defect. Use `v0.1.2` instead.
+
 ## 0.1.1 - 2026-07-12
 
 ### Fixed

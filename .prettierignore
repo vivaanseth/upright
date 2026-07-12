@@ -5,3 +5,4 @@ coverage
 graphify-out
 resources/models
 resources/mediapipe
+src/renderer/public/wasm

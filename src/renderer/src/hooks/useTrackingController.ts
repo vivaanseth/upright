@@ -127,7 +127,6 @@ export function useTrackingController() {
     if (workerRef.current) return;
     const worker = new Worker(
       new URL("../workers/pose.worker.ts", import.meta.url),
-      { type: "module" },
     );
     workerRef.current = worker;
     worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
