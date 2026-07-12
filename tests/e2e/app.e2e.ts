@@ -8,10 +8,13 @@ const launch = async (
   userData: string,
   environment: Record<string, string> = {},
 ) => {
-  const linuxSandboxArgs = process.platform === "linux" ? ["--no-sandbox"] : [];
+  const linuxTestArgs =
+    process.platform === "linux"
+      ? ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"]
+      : [];
   return electron.launch({
     args: [
-      ...linuxSandboxArgs,
+      ...linuxTestArgs,
       "--use-fake-device-for-media-stream",
       "--use-fake-ui-for-media-stream",
       `--user-data-dir=${userData}`,
