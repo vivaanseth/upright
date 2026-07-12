@@ -6,7 +6,7 @@ This file records the compatibility evidence required before Posture can be desc
 
 | Area                | Status  | Evidence                                                                                                         |
 | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| macOS Apple Silicon | Partial | Local development and packaged hotfix validation completed on 2026-07-12. Re-run after `v0.5.0` artifacts exist. |
+| macOS Apple Silicon | Partial | Local development and packaged hotfix validation completed on 2026-07-12. Re-run after `v0.5.1` artifacts exist. |
 | macOS Intel         | Pending | Requires physical or virtual Intel macOS test.                                                                   |
 | Windows 10 x64      | Pending | Requires clean-machine camera onboarding, pause, quit, and uninstall test.                                       |
 | Windows 11 x64      | Pending | Requires clean-machine camera onboarding, pause, quit, and uninstall test.                                       |

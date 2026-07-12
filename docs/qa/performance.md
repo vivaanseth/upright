@@ -29,4 +29,4 @@ Posture should remain quiet enough to leave running all day. These targets are e
 
 ## Current evidence
 
-`v0.1.2` local macOS package validation showed functional camera onboarding and inference, but the earlier summed-RSS memory method double-counted shared pages. Re-measure `v0.5.0` with private-memory methodology before promoting a release candidate.
+`v0.1.2` local macOS package validation showed functional camera onboarding and inference, but the earlier summed-RSS memory method double-counted shared pages. Re-measure `v0.5.1` with private-memory methodology before promoting a release candidate.
