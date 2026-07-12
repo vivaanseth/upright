@@ -82,6 +82,25 @@ const calibration = (
   compatibility: "compatible",
 });
 
+const withPlatform = async <T>(
+  platform: NodeJS.Platform,
+  callback: () => Promise<T>,
+): Promise<T> => {
+  const originalPlatform = process.platform;
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    value: platform,
+  });
+  try {
+    return await callback();
+  } finally {
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: originalPlatform,
+    });
+  }
+};
+
 afterEach(async () => {
   await Promise.all(
     temporaryRoots
@@ -251,31 +270,23 @@ describe("LocalStore", () => {
   });
 
   it("cleans temporary export files when atomic replacement fails", async () => {
-    const { root, store } = await createStore();
-    await expect(store.exportData(root)).rejects.toBeTruthy();
-    expect(
-      (await readdir(root)).filter((file) => file.endsWith(".tmp")),
-    ).toEqual([]);
-  });
-
-  it("retries atomic replacement failures on Windows", async () => {
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: "win32",
-    });
-    try {
+    await withPlatform("linux", async () => {
       const { root, store } = await createStore();
       await expect(store.exportData(root)).rejects.toBeTruthy();
       expect(
         (await readdir(root)).filter((file) => file.endsWith(".tmp")),
       ).toEqual([]);
-    } finally {
-      Object.defineProperty(process, "platform", {
-        configurable: true,
-        value: originalPlatform,
-      });
-    }
+    });
+  });
+
+  it("retries atomic replacement failures on Windows", async () => {
+    await withPlatform("win32", async () => {
+      const { root, store } = await createStore();
+      await expect(store.exportData(root)).rejects.toBeTruthy();
+      expect(
+        (await readdir(root)).filter((file) => file.endsWith(".tmp")),
+      ).toEqual([]);
+    });
   });
 
   it("deletes sessions and resets every local data file", async () => {
