@@ -2,6 +2,29 @@
 
 All notable changes follow semantic versioning.
 
+## 0.5.0 - 2026-07-12
+
+### Added
+
+- Separate camera/tracking lifecycle state from posture classification state.
+- Calibration V2 with exact camera matching, metric reliability, rejection reasons, and compatibility status.
+- SessionSummary V2 and Export V2 with crash recovery, time-weighted scoring, atomic writes, and export privacy validation.
+- Adaptive pose sampling, worker watchdog recovery, Linux frame-capture fallback, and development diagnostics.
+- Camera and calibration management, destructive data controls, storage recovery notices, and pending/error feedback in Settings.
+- Package manifest, privacy-boundary, license, audit, and coverage checks for release readiness.
+- Release QA documentation for compatibility evidence, performance methodology, and manual packaging gates.
+
+### Changed
+
+- Start sessions only after the renderer reports an active calibrated tracking runtime.
+- Treat unreliable metric coverage as Unknown rather than Poor.
+- Keep calibrations scoped to their exact camera identifier.
+- Harden trusted external URL handling and default release/repository links.
+
+### Release note
+
+- This is a feature-complete beta line. The Codex Security deep scan, hardware compatibility matrix, and stable-signing milestones remain outside this release gate.
+
 ## 0.1.2 - 2026-07-12
 
 ### Fixed

@@ -23,19 +23,24 @@ import {
   appInfoSchema,
   calibrationSchema,
   cameraAccessStatusSchema,
+  powerStateSchema,
   settingsSchema,
+  trackingRuntimeStateSchema,
   trackingSnapshotSchema,
   type PostureState,
   type Settings,
   type TrackingCommand,
   type TrustedUrlKind,
   type CameraAccessStatus,
+  type StorageRecoveryNotice,
+  type TrackingRuntimeState,
 } from "../shared/contracts";
 import { ReminderPolicy, SessionAccumulator } from "../shared/session-engine";
 import {
   isTrustedRendererUrl,
   isVideoOnlyMediaRequest,
   resolveRendererAsset,
+  validateTrustedExternalUrl,
 } from "./security";
 import { LocalStore } from "./storage";
 
@@ -54,13 +59,14 @@ protocol.registerSchemesAsPrivileged([
 
 const RENDERER_ROOT = join(__dirname, "../renderer");
 const PRELOAD_PATH = join(__dirname, "../preload/index.js");
-const repositoryUrl = __POSTURE_REPOSITORY_URL__.replace(/\/$/, "");
+const repositoryUrl = validateTrustedExternalUrl(__POSTURE_REPOSITORY_URL__);
 const trustedUrls: Record<TrustedUrlKind, string> = {
   repository: repositoryUrl,
-  releases: `${repositoryUrl}/releases`,
-  privacy: `${repositoryUrl}/blob/main/PRODUCT.md`,
-  mediapipe:
+  releases: validateTrustedExternalUrl(`${repositoryUrl}/releases`),
+  privacy: validateTrustedExternalUrl(`${repositoryUrl}/blob/main/PRODUCT.md`),
+  mediapipe: validateTrustedExternalUrl(
     "https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker",
+  ),
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -68,6 +74,14 @@ let nudgeWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let lastState: PostureState = "paused";
+let lastRuntimeState: TrackingRuntimeState = {
+  schemaVersion: 1,
+  mode: "stopped",
+  cameraId: null,
+  calibrationId: null,
+  errorCode: null,
+  updatedAt: 0,
+};
 let store: LocalStore;
 let settings: Settings;
 let currentSession: SessionAccumulator | null = null;
@@ -75,6 +89,12 @@ let reminderPolicy: ReminderPolicy | null = null;
 let lastSessionSaveAt = 0;
 let resumeAfterWake = false;
 let pauseTimer: NodeJS.Timeout | null = null;
+let nudgeTimer: NodeJS.Timeout | null = null;
+let lastSnapshotReceivedAt = 0;
+let autoStartPending = false;
+let quitFlushStarted = false;
+let quitFlushed = false;
+const pendingRecoveryNotices: StorageRecoveryNotice[] = [];
 
 const allowOrigin = (url: string): boolean =>
   isTrustedRendererUrl(url, {
@@ -101,10 +121,10 @@ function handle<T>(
   );
 }
 
-function rendererUrl(hash = ""): string {
+function rendererUrl(hash = "", search = ""): string {
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL)
-    return `${process.env.ELECTRON_RENDERER_URL}${hash}`;
-  return `app://posture/index.html${hash}`;
+    return `${process.env.ELECTRON_RENDERER_URL}${search}${hash}`;
+  return `app://posture/index.html${search}${hash}`;
 }
 
 function createMainWindow(): BrowserWindow {
@@ -167,12 +187,27 @@ function createTrayIcon(): Electron.NativeImage {
 
 function rebuildTray(): void {
   if (!tray) return;
-  const isActive = !["paused", "unknown", "away"].includes(lastState);
+  const isActive = [
+    "requesting-permission",
+    "preview",
+    "calibrating",
+    "tracking",
+    "recovering",
+  ].includes(lastRuntimeState.mode);
+  const runtimeLabel = lastRuntimeState.mode.replace("-", " ");
   const menu = Menu.buildFromTemplate([
     {
-      label: `Status: ${lastState[0].toUpperCase()}${lastState.slice(1)}`,
+      label: `Tracking: ${runtimeLabel[0].toUpperCase()}${runtimeLabel.slice(1)}`,
       enabled: false,
     },
+    ...(lastRuntimeState.mode === "tracking"
+      ? [
+          {
+            label: `Posture: ${lastState[0].toUpperCase()}${lastState.slice(1)}`,
+            enabled: false,
+          } as Electron.MenuItemConstructorOptions,
+        ]
+      : []),
     { type: "separator" },
     { label: "Open Posture", click: showMainWindow },
     isActive
@@ -215,7 +250,7 @@ function rebuildTray(): void {
     },
   ]);
   tray.setContextMenu(menu);
-  tray.setToolTip(`Posture - ${lastState}`);
+  tray.setToolTip(`Posture - ${runtimeLabel}`);
 }
 
 function createTray(): void {
@@ -227,6 +262,7 @@ function createTray(): void {
 function showNudge(): void {
   if (nudgeWindow && !nudgeWindow.isDestroyed()) {
     nudgeWindow.showInactive();
+    scheduleNudgeClose();
     return;
   }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
@@ -263,11 +299,21 @@ function showNudge(): void {
   nudgeWindow.on("closed", () => {
     nudgeWindow = null;
   });
-  void nudgeWindow.loadURL(rendererUrl("#nudge"));
-  setTimeout(() => nudgeWindow?.close(), 8_000).unref();
+  void nudgeWindow.loadURL(
+    rendererUrl("#nudge", `?theme=${encodeURIComponent(settings.theme)}`),
+  );
+  scheduleNudgeClose();
+}
+
+function scheduleNudgeClose(): void {
+  if (nudgeTimer) clearTimeout(nudgeTimer);
+  nudgeTimer = setTimeout(() => nudgeWindow?.close(), 8_000);
+  nudgeTimer.unref();
 }
 
 function dismissNudge(): void {
+  if (nudgeTimer) clearTimeout(nudgeTimer);
+  nudgeTimer = null;
   nudgeWindow?.close();
 }
 
@@ -282,9 +328,9 @@ function pauseForMinutes(minutes: 10 | 30 | 60): void {
   pauseTimer.unref();
 }
 
-async function startSession(): Promise<void> {
-  if (currentSession) return;
-  const calibrationId = (await store.getCalibrations())[0]?.id ?? null;
+async function startSession(calibrationId: string): Promise<void> {
+  if (currentSession?.getSummary().calibrationId === calibrationId) return;
+  if (currentSession) await endSession();
   currentSession = new SessionAccumulator(calibrationId);
   reminderPolicy = new ReminderPolicy();
 }
@@ -300,8 +346,6 @@ async function receiveSnapshot(snapshotInput: unknown): Promise<void> {
   const snapshot = trackingSnapshotSchema.parse(snapshotInput);
   lastState = snapshot.state;
   rebuildTray();
-  if (!currentSession && !["paused", "calibrating"].includes(snapshot.state))
-    await startSession();
   if (!currentSession) return;
 
   currentSession.update(snapshot);
@@ -319,6 +363,52 @@ async function receiveSnapshot(snapshotInput: unknown): Promise<void> {
     lastSessionSaveAt = Date.now();
     await store.saveSession(currentSession.getSummary());
   }
+}
+
+async function receiveRuntimeState(input: unknown): Promise<void> {
+  const runtime = trackingRuntimeStateSchema.parse(input);
+  if (runtime.updatedAt < lastRuntimeState.updatedAt) return;
+
+  if (runtime.mode === "tracking") {
+    if (!runtime.cameraId || !runtime.calibrationId) {
+      throw new Error("Tracking requires a camera and calibration.");
+    }
+    const exactCalibration = (await store.getCalibrations()).find(
+      (calibration) =>
+        calibration.schemaVersion === 2 &&
+        calibration.compatibility === "compatible" &&
+        calibration.id === runtime.calibrationId &&
+        calibration.cameraId === runtime.cameraId,
+    );
+    if (!exactCalibration) {
+      throw new Error("Tracking calibration does not match the active camera.");
+    }
+    await startSession(exactCalibration.id);
+  }
+
+  lastRuntimeState = runtime;
+  if (runtime.mode !== "tracking") {
+    currentSession?.suspend();
+    reminderPolicy?.suspend();
+  }
+  if (runtime.mode === "stopped") await endSession();
+  rebuildTray();
+  if (autoStartPending && runtime.mode === "stopped") {
+    autoStartPending = false;
+    sendCommand({ type: "start" });
+  }
+}
+
+function currentPowerState() {
+  return powerStateSchema.parse({
+    onBattery: powerMonitor.isOnBatteryPower(),
+    updatedAt: performance.now(),
+  });
+}
+
+function emitPowerState(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("app:power-state-changed", currentPowerState());
 }
 
 function configurePermissions(): void {
@@ -393,6 +483,7 @@ function configureIpc(): void {
       isPackaged: app.isPackaged,
     }),
   );
+  handle("app:get-power-state", () => currentPowerState());
   handle("app:open-url", async (_event, input) => {
     const kind = z
       .enum(["repository", "releases", "privacy", "mediapipe"])
@@ -404,27 +495,38 @@ function configureIpc(): void {
   handle("camera:open-system-privacy-settings", () =>
     openCameraPrivacySettings(),
   );
-  handle("tracking:start", async () => {
-    await startSession();
-    sendCommand({ type: "start" });
-  });
+  handle("tracking:start", () => sendCommand({ type: "start" }));
   handle("tracking:pause", (_event, reason) =>
     sendCommand({
       type: "pause",
       reason: z.string().max(120).optional().parse(reason),
     }),
   );
-  handle("tracking:resume", async () => {
-    await startSession();
-    sendCommand({ type: "resume" });
-  });
+  handle("tracking:resume", () => sendCommand({ type: "resume" }));
   handle("tracking:stop", async () => {
     sendCommand({ type: "stop" });
     await endSession();
   });
   ipcMain.on("tracking:snapshot", (event, input) => {
-    validateSender(event);
-    void receiveSnapshot(input);
+    try {
+      validateSender(event);
+      const now = performance.now();
+      if (now - lastSnapshotReceivedAt < 100) return;
+      lastSnapshotReceivedAt = now;
+      void receiveSnapshot(input).catch(() => undefined);
+    } catch {
+      // Untrusted or malformed event payloads are ignored without crashing main.
+    }
+  });
+  ipcMain.on("tracking:runtime-state", (event, input) => {
+    try {
+      validateSender(event);
+      void receiveRuntimeState(input).catch(() => {
+        sendCommand({ type: "pause", reason: "invalid runtime state" });
+      });
+    } catch {
+      // Untrusted runtime events are ignored without crashing main.
+    }
   });
 
   handle("settings:get", () => store.getSettings());
@@ -471,6 +573,7 @@ function configureIpc(): void {
     await store.resetAll();
     settings = await store.getSettings();
   });
+  handle("storage:get-recoveries", () => [...pendingRecoveryNotices]);
   handle("window:hide", () => mainWindow?.hide());
   handle("window:open-main", () => {
     dismissNudge();
@@ -526,8 +629,13 @@ else {
   app.on("second-instance", showMainWindow);
   void app.whenReady().then(async () => {
     app.setName("Posture");
-    store = new LocalStore();
+    store = new LocalStore(undefined, (notice) => {
+      pendingRecoveryNotices.push(notice);
+      if (mainWindow && !mainWindow.isDestroyed())
+        mainWindow.webContents.send("storage:recovery", notice);
+    });
     await store.initialize();
+    await store.recoverUnfinishedSessions();
     settings = await store.getSettings();
     if (app.isPackaged || !process.env.ELECTRON_RENDERER_URL)
       registerAppProtocol();
@@ -535,25 +643,35 @@ else {
     configureIpc();
     mainWindow = createMainWindow();
     createTray();
-    if (settings.autoStartTracking)
-      mainWindow.webContents.once("did-finish-load", () =>
-        sendCommand({ type: "start" }),
-      );
+    autoStartPending =
+      settings.autoStartTracking && settings.onboardingComplete;
 
     powerMonitor.on("suspend", () => {
-      resumeAfterWake = !["paused", "away", "unknown"].includes(lastState);
+      resumeAfterWake = lastRuntimeState.mode === "tracking";
       sendCommand({ type: "pause", reason: "computer sleep" });
     });
     powerMonitor.on("resume", () => {
       if (resumeAfterWake) sendCommand({ type: "resume" });
     });
+    powerMonitor.on("on-battery", emitPowerState);
+    powerMonitor.on("on-ac", emitPowerState);
   });
 }
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
   quitting = true;
+  if (quitFlushed || !store) return;
+  event.preventDefault();
+  if (quitFlushStarted) return;
+  quitFlushStarted = true;
   sendCommand({ type: "stop" });
-  if (currentSession) void store.saveSession(currentSession.end());
+  void (async () => {
+    await endSession();
+    await store.flush();
+  })().finally(() => {
+    quitFlushed = true;
+    app.quit();
+  });
 });
 
 app.on("window-all-closed", () => undefined);

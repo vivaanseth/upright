@@ -74,6 +74,15 @@ pnpm test:e2e
 
 Unit tests cover calibration, scoring, hysteresis, Away behavior, session accounting, sleep-size time gaps, and reminder timing. The Electron end-to-end test launches the real app through its custom protocol and verifies the privacy onboarding flow.
 
+Release-readiness checks:
+
+```bash
+pnpm test:coverage
+pnpm scan:privacy
+pnpm audit:prod
+pnpm audit:licenses
+```
+
 ## Packaging
 
 Build a package for the current platform:
@@ -110,6 +119,8 @@ Before a stable release, test:
 - GNOME and KDE on Wayland and X11 where available
 - Integrated and USB cameras
 - Permission denied, camera busy, disconnect/reconnect, sleep/wake, multiple displays, and 200% zoom
+
+Compatibility evidence is tracked in [docs/qa/compatibility.md](docs/qa/compatibility.md). Performance methodology is tracked in [docs/qa/performance.md](docs/qa/performance.md). The release process is documented in [docs/release-process.md](docs/release-process.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development conventions and [SECURITY.md](SECURITY.md) for private vulnerability reporting guidance.
 

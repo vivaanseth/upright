@@ -214,6 +214,19 @@ p {
   height: 100dvh;
   overflow: auto;
 }
+.recovery-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px 24px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--caution);
+  border-radius: var(--radius-control);
+  color: var(--ink);
+  background: var(--raised);
+  font-size: 12px;
+}
 .screen {
   width: min(100%, 1180px);
   min-height: 100%;
@@ -250,6 +263,12 @@ p {
 }
 .compact-header {
   align-items: center;
+}
+.tracking-mode {
+  margin: -22px 0 20px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .button {
@@ -595,10 +614,13 @@ select {
 }
 .calibration-progress span {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: inherit;
   background: var(--primary);
-  transition: width 200ms linear;
+  transform: scaleX(var(--progress-scale, 0));
+  transform-origin: left center;
+  transition: transform 200ms linear;
 }
 .calibration-progress.large {
   height: 8px;
@@ -634,6 +656,19 @@ select {
   display: flex;
   flex-direction: column;
   gap: 36px;
+}
+.settings-feedback {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+.settings-feedback.success {
+  color: var(--primary);
+}
+.settings-feedback.error,
+.destructive-text {
+  color: var(--poor);
 }
 .settings-group {
   display: grid;
@@ -716,6 +751,34 @@ select {
   gap: 10px;
   padding: 4px 0 18px;
 }
+.calibration-list {
+  margin-bottom: 14px;
+}
+.calibration-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 58px;
+  border-bottom: 1px solid var(--line);
+}
+.calibration-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.calibration-row strong {
+  font-size: 13px;
+}
+.calibration-row small,
+.empty-setting {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.empty-setting {
+  padding: 14px 0 18px;
+}
 .privacy-explainer {
   display: flex;
   align-items: flex-start;
@@ -734,9 +797,43 @@ select {
   font-size: 12px;
   line-height: 1.5;
 }
+.inline-link {
+  margin-top: 14px;
+}
+.danger-zone {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid color-mix(in oklch, var(--poor) 35%, var(--line));
+  border-radius: var(--radius-control);
+  background: var(--poor-soft);
+}
+.danger-zone > svg {
+  color: var(--poor);
+}
+.danger-zone strong {
+  font-size: 13px;
+}
+.danger-zone p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.button-danger {
+  border-color: var(--poor);
+  color: var(--raised);
+  background: var(--poor);
+}
+.button-danger:hover:not(:disabled) {
+  filter: brightness(0.93);
+}
 .about-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 22px;
   color: var(--muted);
   font-size: 12px;

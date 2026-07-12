@@ -1,5 +1,9 @@
 import { ArrowRight, Pause, X } from "@phosphor-icons/react";
 
+const safely = (operation: Promise<unknown>): void => {
+  void operation.catch(() => undefined);
+};
+
 export function Nudge(): React.JSX.Element {
   return (
     <main className="nudge-shell" role="alert" aria-live="assertive">
@@ -12,7 +16,7 @@ export function Nudge(): React.JSX.Element {
         <button
           className="icon-button"
           aria-label="Dismiss reminder"
-          onClick={() => window.posture.nudge.dismiss()}
+          onClick={() => safely(window.posture.nudge.dismiss())}
         >
           <X size={16} weight="bold" />
         </button>
@@ -20,13 +24,13 @@ export function Nudge(): React.JSX.Element {
       <div className="nudge-actions">
         <button
           className="button button-secondary compact"
-          onClick={() => window.posture.nudge.pauseForMinutes(10)}
+          onClick={() => safely(window.posture.nudge.pauseForMinutes(10))}
         >
           <Pause size={15} weight="bold" /> Pause 10 min
         </button>
         <button
           className="button button-primary compact"
-          onClick={() => window.posture.window.openMain()}
+          onClick={() => safely(window.posture.window.openMain())}
         >
           Open Posture <ArrowRight size={15} weight="bold" />
         </button>

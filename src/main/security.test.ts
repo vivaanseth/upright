@@ -4,6 +4,7 @@ import {
   isTrustedRendererUrl,
   isVideoOnlyMediaRequest,
   resolveRendererAsset,
+  validateTrustedExternalUrl,
 } from "./security";
 
 describe("renderer trust boundary", () => {
@@ -68,5 +69,22 @@ describe("media permission scope", () => {
     expect(isVideoOnlyMediaRequest(["video"])).toBe(true);
     expect(isVideoOnlyMediaRequest(["audio"])).toBe(false);
     expect(isVideoOnlyMediaRequest(["video", "audio"])).toBe(false);
+  });
+});
+
+describe("trusted external URL validation", () => {
+  it("accepts only HTTPS documentation and GitHub release destinations", () => {
+    expect(
+      validateTrustedExternalUrl("https://github.com/vivaanseth/Posture/"),
+    ).toBe("https://github.com/vivaanseth/Posture");
+    expect(() =>
+      validateTrustedExternalUrl("http://github.com/vivaanseth/Posture"),
+    ).toThrow(/untrusted/i);
+    expect(() =>
+      validateTrustedExternalUrl("https://github.com.evil.test/Posture"),
+    ).toThrow(/untrusted/i);
+    expect(() =>
+      validateTrustedExternalUrl("https://user:pass@github.com/repo"),
+    ).toThrow(/untrusted/i);
   });
 });

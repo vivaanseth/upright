@@ -61,7 +61,9 @@ export function StatusVisual({
                 ? "Your position is beginning to drift."
                 : state === "paused"
                   ? "Start when you are ready for a focused session."
-                  : "Make sure your head and shoulders are visible."}
+                  : state === "away"
+                    ? "Posture will continue when you return."
+                    : "Make sure your head and shoulders are visible."}
         </p>
       </div>
     </div>

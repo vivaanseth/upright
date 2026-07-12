@@ -1,6 +1,7 @@
 import { CaretRight, Pause, Play, Target, Timer } from "@phosphor-icons/react";
 import type {
   SessionSummary,
+  TrackingMode,
   TrackingSnapshot,
 } from "../../../shared/contracts";
 import { StatusVisual } from "../components/StatusVisual";
@@ -15,26 +16,54 @@ const formatDuration = (milliseconds: number): string => {
     : `${minutes}:${String(seconds).padStart(2, "0")}`;
 };
 
-const percentage = (value: number, total: number): number =>
-  total > 0 ? Math.round((value / total) * 100) : 0;
+const exactPercentages = (values: number[]): number[] => {
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) return values.map(() => 0);
+  const raw = values.map((value) => (value / total) * 100);
+  const rounded = raw.map(Math.floor);
+  let remaining = 100 - rounded.reduce((sum, value) => sum + value, 0);
+  const order = raw
+    .map((value, index) => ({ index, remainder: value - rounded[index] }))
+    .sort((a, b) => b.remainder - a.remainder);
+  for (const entry of order) {
+    if (remaining <= 0) break;
+    rounded[entry.index] += 1;
+    remaining -= 1;
+  }
+  return rounded;
+};
+
+const trackingModeLabel: Record<TrackingMode, string> = {
+  stopped: "Stopped",
+  "requesting-permission": "Requesting camera access",
+  preview: "Camera preview",
+  calibrating: "Calibrating",
+  tracking: "Tracking",
+  paused: "Paused",
+  recovering: "Recovering camera",
+  error: "Needs attention",
+};
 
 export function Dashboard({
   snapshot,
   session,
-  tracking,
+  trackingMode,
   onToggle,
   onDiagnostics,
 }: {
   snapshot: TrackingSnapshot;
   session: SessionSummary | null;
-  tracking: boolean;
+  trackingMode: TrackingMode;
   onToggle: () => void;
   onDiagnostics: () => void;
 }): React.JSX.Element {
   const total = session?.trackedMs ?? 0;
-  const good = percentage(session?.goodMs ?? 0, total);
-  const caution = percentage(session?.cautionMs ?? 0, total);
-  const poor = percentage(session?.poorMs ?? 0, total);
+  const [good, caution, poor] = exactPercentages([
+    session?.goodMs ?? 0,
+    session?.cautionMs ?? 0,
+    session?.poorMs ?? 0,
+  ]);
+  const canPause = ["tracking", "recovering"].includes(trackingMode);
 
   return (
     <section
@@ -47,17 +76,25 @@ export function Dashboard({
           <h2 id="dashboard-title">Stay comfortable, not perfect.</h2>
         </div>
         <button
-          className={`button ${tracking ? "button-secondary" : "button-primary"}`}
+          className={`button ${canPause ? "button-secondary" : "button-primary"}`}
           onClick={onToggle}
+          disabled={
+            trackingMode === "requesting-permission" ||
+            trackingMode === "calibrating"
+          }
         >
-          {tracking ? (
+          {canPause ? (
             <Pause size={18} weight="bold" />
           ) : (
             <Play size={18} weight="fill" />
           )}
-          {tracking ? "Pause" : "Start tracking"}
+          {canPause ? "Pause" : "Start tracking"}
         </button>
       </header>
+
+      <p className="tracking-mode" aria-live="polite" aria-atomic="true">
+        Camera: {trackingModeLabel[trackingMode]}
+      </p>
 
       <div className="dashboard-primary">
         <StatusVisual state={snapshot.state} score={snapshot.score} />
