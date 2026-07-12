@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "A private, local-only posture companion for macOS, Windows, and Linux.",
   "main": "out/main/index.js",
-  "author": "Posture Contributors",
+  "author": {
+    "name": "Posture Contributors",
+    "email": "vivaanseth@users.noreply.github.com"
+  },
   "license": "MIT",
   "private": true,
   "homepage": "https://github.com/vivaanseth/Posture#readme",
@@ -137,7 +140,9 @@
       "icon": "build/icon.png",
       "category": "Utility",
       "executableName": "Posture",
+      "maintainer": "vivaanseth <vivaanseth@users.noreply.github.com>",
       "synopsis": "Private posture reminders from your webcam",
+      "syncDesktopName": true,
       "target": [
         {
           "target": "AppImage",
