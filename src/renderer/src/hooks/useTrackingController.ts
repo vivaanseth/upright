@@ -73,6 +73,7 @@ export function useTrackingController() {
   const [calibrating, setCalibrating] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const frameCanvasRef = useRef<OffscreenCanvas | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const timerRef = useRef<number | null>(null);
   const frameBusyRef = useRef(false);
@@ -189,7 +190,22 @@ export function useTrackingController() {
           return;
         frameBusyRef.current = true;
         try {
-          const bitmap = await createImageBitmap(videoRef.current);
+          const video = videoRef.current;
+          let bitmap: ImageBitmap;
+          if (navigator.userAgent.includes("Linux")) {
+            const canvas =
+              frameCanvasRef.current ?? new OffscreenCanvas(640, 480);
+            frameCanvasRef.current = canvas;
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            const context = canvas.getContext("2d", { alpha: false });
+            if (!context)
+              throw new Error("A camera frame canvas could not be created.");
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            bitmap = canvas.transferToImageBitmap();
+          } else {
+            bitmap = await createImageBitmap(video);
+          }
           workerRef.current?.postMessage(
             { type: "frame", bitmap, timestamp: performance.now() },
             [bitmap],
