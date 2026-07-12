@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      electron-toolchain:
+        patterns: ["electron", "electron-builder", "electron-vite", "vite"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

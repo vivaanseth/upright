@@ -1,0 +1,130 @@
+import { describe, expect, it } from "vitest";
+import {
+  defaultSettings,
+  type Calibration,
+  type PostureFeatures,
+} from "./contracts";
+import {
+  buildCalibration,
+  PostureClassifier,
+  scorePosture,
+} from "./posture-engine";
+
+const baseline: PostureFeatures = {
+  forwardHead: 0.2,
+  lateralHeadTilt: 0,
+  shoulderSlope: 0,
+  verticalCompression: 1.2,
+  trunkLean: 0,
+  confidence: 0.95,
+};
+
+const calibration: Calibration = {
+  schemaVersion: 1,
+  id: "00000000-0000-4000-8000-000000000000",
+  cameraId: "camera-1",
+  createdAt: "2026-07-11T12:00:00.000Z",
+  modelVersion: "test",
+  resolution: { width: 640, height: 480 },
+  baseline,
+  variance: {
+    forwardHead: 0.01,
+    lateralHeadTilt: 0.2,
+    shoulderSlope: 0.2,
+    verticalCompression: 0.01,
+    trunkLean: 0.2,
+    confidence: 0.01,
+  },
+};
+
+describe("posture scoring", () => {
+  it("scores the calibrated baseline as good", () => {
+    const result = scorePosture(baseline, calibration, "balanced");
+    expect(result.score).toBe(100);
+    expect(result.breakdown.upperBody).toBe(100);
+  });
+
+  it("penalizes combined forward head and compression drift", () => {
+    const result = scorePosture(
+      { ...baseline, forwardHead: 0.34, verticalCompression: 0.9 },
+      calibration,
+      "balanced",
+    );
+    expect(result.score).toBeLessThan(50);
+    expect(result.breakdown.forwardHead).toBe(0);
+  });
+
+  it("makes high sensitivity react more strongly than low sensitivity", () => {
+    const current = { ...baseline, forwardHead: 0.28 };
+    expect(scorePosture(current, calibration, "high").score).toBeLessThan(
+      scorePosture(current, calibration, "low").score,
+    );
+  });
+});
+
+describe("calibration", () => {
+  it("uses robust medians for stable samples", () => {
+    const samples = Array.from({ length: 50 }, (_, index) => ({
+      ...baseline,
+      forwardHead: index === 49 ? 4 : 0.2 + (index % 2) * 0.002,
+    }));
+    const result = buildCalibration(samples, "camera-1", {
+      width: 640,
+      height: 480,
+    });
+    expect(result.baseline.forwardHead).toBeCloseTo(0.201, 3);
+  });
+
+  it("rejects too few samples", () => {
+    expect(() =>
+      buildCalibration([baseline], "camera-1", { width: 640, height: 480 }),
+    ).toThrow(/longer/i);
+  });
+
+  it("rejects unstable calibration", () => {
+    const samples = Array.from({ length: 50 }, (_, index) => ({
+      ...baseline,
+      forwardHead: index % 2 === 0 ? 0 : 0.5,
+    }));
+    expect(() =>
+      buildCalibration(samples, "camera-1", { width: 640, height: 480 }),
+    ).toThrow(/movement/i);
+  });
+});
+
+describe("classification", () => {
+  it("keeps missing landmarks unknown before marking the user away", () => {
+    const classifier = new PostureClassifier();
+    expect(
+      classifier.update(null, calibration, defaultSettings, null, 5, 1_000)
+        .state,
+    ).toBe("unknown");
+    expect(
+      classifier.update(null, calibration, defaultSettings, null, 5, 17_000)
+        .state,
+    ).toBe("away");
+  });
+
+  it("uses hysteresis around the good boundary", () => {
+    const classifier = new PostureClassifier();
+    const first = classifier.update(
+      baseline,
+      calibration,
+      defaultSettings,
+      12,
+      5,
+      1_000,
+    );
+    expect(first.state).toBe("good");
+    const drift = { ...baseline, forwardHead: 0.27 };
+    const second = classifier.update(
+      drift,
+      calibration,
+      defaultSettings,
+      12,
+      5,
+      2_000,
+    );
+    expect(second.state).toBe("good");
+  });
+});

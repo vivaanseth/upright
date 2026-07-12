@@ -1,0 +1,169 @@
+{
+  "name": "posture-desktop",
+  "version": "0.1.0",
+  "description": "A private, local-only posture companion for macOS, Windows, and Linux.",
+  "main": "out/main/index.js",
+  "author": "Posture Contributors",
+  "license": "MIT",
+  "private": true,
+  "homepage": "https://github.com/vivaanseth/Posture#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vivaanseth/Posture.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vivaanseth/Posture/issues"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "pnpm verify:assets && pnpm typecheck && electron-vite build",
+    "verify:assets": "node scripts/verify-assets.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "package": "pnpm build && electron-builder --dir",
+    "dist": "pnpm build && electron-builder",
+    "dist:mac": "pnpm build && electron-builder --mac --universal",
+    "dist:win": "pnpm build && electron-builder --win --x64",
+    "dist:linux": "pnpm build && electron-builder --linux --x64"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "0.10.35",
+    "@phosphor-icons/react": "2.1.10",
+    "zod": "4.4.3",
+    "zustand": "5.0.14"
+  },
+  "devDependencies": {
+    "@electron/fuses": "1.8.0",
+    "@eslint/js": "9.39.2",
+    "@playwright/test": "1.58.2",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "24.10.13",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "43.1.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "eslint": "9.39.2",
+    "eslint-plugin-react-hooks": "7.0.1",
+    "eslint-plugin-react-refresh": "0.5.2",
+    "jsdom": "28.0.0",
+    "prettier": "3.8.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.56.1",
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@11.5.3",
+  "build": {
+    "appId": "app.posture.desktop",
+    "productName": "Posture",
+    "asar": true,
+    "asarUnpack": [],
+    "afterPack": "scripts/after-pack.cjs",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "extraResources": [
+      {
+        "from": "build/tray",
+        "to": "icons"
+      }
+    ],
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.healthcare-fitness",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSCameraUsageDescription": "Posture uses your camera to estimate upper-body landmarks locally. Frames are never saved or uploaded.",
+        "NSCameraUseContinuityCameraDeviceType": true
+      }
+    },
+    "dmg": {
+      "sign": false
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "synopsis": "Private posture reminders from your webcam",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "publish": null
+  }
+}

@@ -1,0 +1,34 @@
+name: Feature request
+description: Suggest a focused improvement for Posture.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: Please keep requests aligned with Posture's local-only, non-medical scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What would this help you do?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Suggested solution
+      description: Describe the behavior, UI, or platform support you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - All platforms
+        - macOS
+        - Windows
+        - Linux
+        - Not platform-specific
+    validations:
+      required: true

@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+coverage/
+graphify-out/
+test-results/
+playwright-report/
+src/renderer/public/wasm/
+src/renderer/public/models/
+build/*.png
+build/*.icns
+build/*.ico

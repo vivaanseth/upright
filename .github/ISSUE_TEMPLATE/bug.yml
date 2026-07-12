@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible problem without including private camera data.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach webcam captures, body images, or private exported data.
+  - type: input
+    id: version
+    attributes:
+      label: Posture version
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        [
+          macOS Intel,
+          macOS Apple Silicon,
+          Windows 10,
+          Windows 11,
+          Ubuntu,
+          Fedora,
+          Other Linux,
+        ]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: Describe the actions and what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
