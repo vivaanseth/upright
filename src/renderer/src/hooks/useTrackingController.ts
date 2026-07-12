@@ -77,6 +77,7 @@ export function useTrackingController() {
   const workerRef = useRef<Worker | null>(null);
   const timerRef = useRef<number | null>(null);
   const frameBusyRef = useRef(false);
+  const frameFailureCountRef = useRef(0);
   const classifierRef = useRef(new PostureClassifier());
   const calibrationSamplesRef = useRef<PostureFeatures[]>([]);
   const calibrationStartedRef = useRef(0);
@@ -210,13 +211,22 @@ export function useTrackingController() {
             { type: "frame", bitmap, timestamp: performance.now() },
             [bitmap],
           );
-        } catch {
+          frameFailureCountRef.current = 0;
+        } catch (error) {
           frameBusyRef.current = false;
+          frameFailureCountRef.current += 1;
+          if (frameFailureCountRef.current === 3) {
+            setCameraError(
+              `Camera frames could not be sampled: ${
+                error instanceof Error ? error.message : "unknown frame error"
+              }`,
+            );
+          }
         }
       },
       Math.round(1_000 / fps),
     );
-  }, [settings.reduceOnBattery, stopSampler]);
+  }, [setCameraError, settings.reduceOnBattery, stopSampler]);
 
   const openCamera = useCallback(
     async (cameraId?: string | null, allowFallback = true) => {

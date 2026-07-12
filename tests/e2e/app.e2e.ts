@@ -68,15 +68,25 @@ test("launches the secure onboarding flow", async () => {
       window.getByRole("button", { name: "Start calibration" }),
     ).toBeEnabled({ timeout: 15_000 });
     await window.getByRole("button", { name: "Start calibration" }).click();
-    await expect
-      .poll(
-        async () =>
-          Number(
-            await window.getByRole("progressbar").getAttribute("aria-valuenow"),
-          ),
-        { timeout: 30_000 },
-      )
-      .toBeGreaterThan(0);
+    try {
+      await expect
+        .poll(
+          async () =>
+            Number(
+              await window
+                .getByRole("progressbar")
+                .getAttribute("aria-valuenow"),
+            ),
+          { timeout: 30_000 },
+        )
+        .toBeGreaterThan(0);
+    } catch (error) {
+      console.error(
+        "Renderer state at inference timeout:",
+        await window.locator("body").innerText(),
+      );
+      throw error;
+    }
     await expect(window.locator("body")).not.toContainText("undefined");
   } finally {
     await app.close();
