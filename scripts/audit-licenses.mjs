@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const pnpmLicenseArgs = ["licenses", "list", "--json"];
 
 const blockedLicensePatterns = [
   /\bAGPL\b/i,
@@ -15,9 +16,33 @@ const blockedLicensePatterns = [
   /UNKNOWN/i,
 ];
 
-const { stdout } = await execFileAsync("pnpm", ["licenses", "list", "--json"], {
-  maxBuffer: 20 * 1024 * 1024,
-});
+function resolvePnpmInvocation() {
+  const npmExecPath = process.env.npm_execpath;
+
+  if (npmExecPath && npmExecPath.toLowerCase().includes("pnpm")) {
+    return {
+      file: process.execPath,
+      args: [npmExecPath, ...pnpmLicenseArgs],
+      options: {},
+    };
+  }
+
+  return {
+    file: process.platform === "win32" ? "pnpm.cmd" : "pnpm",
+    args: pnpmLicenseArgs,
+    options: { shell: process.platform === "win32" },
+  };
+}
+
+const pnpmInvocation = resolvePnpmInvocation();
+const { stdout } = await execFileAsync(
+  pnpmInvocation.file,
+  pnpmInvocation.args,
+  {
+    ...pnpmInvocation.options,
+    maxBuffer: 20 * 1024 * 1024,
+  },
+);
 const inventory = JSON.parse(stdout);
 const failures = [];
 

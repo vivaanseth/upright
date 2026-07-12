@@ -2,6 +2,16 @@
 
 All notable changes follow semantic versioning.
 
+## 0.5.1 - 2026-07-12
+
+### Fixed
+
+- Make the release license-audit script resolve pnpm correctly on Windows runners.
+
+### Release note
+
+- Supersedes the failed `v0.5.0` tag workflow attempt. The `v0.5.0` app changes remain the beta baseline; `v0.5.1` is the first publishable beta release candidate for that line.
+
 ## 0.5.0 - 2026-07-12
 
 ### Added
