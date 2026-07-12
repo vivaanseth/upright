@@ -4,19 +4,20 @@ import { resolve } from "node:path";
 
 const repositoryUrl =
   process.env.POSTURE_REPOSITORY_URL ?? "https://github.com";
+const sourceMaps = process.env.POSTURE_SOURCE_MAPS === "true";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ["zod"] })],
     define: {
       __POSTURE_REPOSITORY_URL__: JSON.stringify(repositoryUrl),
     },
-    build: { sourcemap: true },
+    build: { sourcemap: sourceMaps },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {
-      sourcemap: true,
+      sourcemap: sourceMaps,
       rollupOptions: { output: { format: "cjs", entryFileNames: "index.js" } },
     },
   },
@@ -28,6 +29,6 @@ export default defineConfig({
       },
     },
     plugins: [react()],
-    build: { sourcemap: true },
+    build: { sourcemap: sourceMaps },
   },
 });

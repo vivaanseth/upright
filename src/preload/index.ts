@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   Calibration,
+  CameraAccessStatus,
   PostureApi,
   Settings,
   TrackingCommand,
@@ -8,11 +9,41 @@ import type {
   TrustedUrlKind,
 } from "../shared/contracts";
 
+const cameraAccessStatuses = new Set<CameraAccessStatus>([
+  "not-determined",
+  "granted",
+  "denied",
+  "restricted",
+  "unknown",
+]);
+
+function parseCameraAccessStatus(value: unknown): CameraAccessStatus {
+  if (
+    typeof value === "string" &&
+    cameraAccessStatuses.has(value as CameraAccessStatus)
+  ) {
+    return value as CameraAccessStatus;
+  }
+  throw new TypeError("Received an invalid camera access status.");
+}
+
 const api: PostureApi = {
   app: {
     getInfo: () => ipcRenderer.invoke("app:get-info"),
     openExternalTrustedUrl: (kind: TrustedUrlKind) =>
       ipcRenderer.invoke("app:open-url", kind),
+  },
+  camera: {
+    getAccessStatus: async () =>
+      parseCameraAccessStatus(
+        await ipcRenderer.invoke("camera:get-access-status"),
+      ),
+    requestAccess: async () =>
+      parseCameraAccessStatus(
+        await ipcRenderer.invoke("camera:request-access"),
+      ),
+    openSystemPrivacySettings: () =>
+      ipcRenderer.invoke("camera:open-system-privacy-settings"),
   },
   tracking: {
     start: () => ipcRenderer.invoke("tracking:start"),

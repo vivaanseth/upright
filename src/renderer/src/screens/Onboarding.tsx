@@ -7,6 +7,7 @@ import {
   PersonSimple,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
+import type { CameraAccessStatus } from "../../../shared/contracts";
 import { CameraPreview } from "../components/CameraPreview";
 import type { CameraDevice } from "../hooks/useTrackingController";
 
@@ -18,9 +19,13 @@ export function Onboarding({
   selectedCameraId,
   progress,
   calibrating,
+  cameraAccessStatus,
+  canOpenCameraSettings,
   error,
   hasCalibration,
   onOpenCamera,
+  onCloseCamera,
+  onOpenCameraSettings,
   onSelectCamera,
   onCalibrate,
   onComplete,
@@ -30,9 +35,13 @@ export function Onboarding({
   selectedCameraId: string | null;
   progress: number;
   calibrating: boolean;
+  cameraAccessStatus: CameraAccessStatus;
+  canOpenCameraSettings: boolean;
   error: string | null;
   hasCalibration: boolean;
   onOpenCamera: () => void;
+  onCloseCamera: () => void;
+  onOpenCameraSettings: () => void;
   onSelectCamera: (id: string) => void;
   onCalibrate: () => void;
   onComplete: () => void;
@@ -42,7 +51,6 @@ export function Onboarding({
 
   useEffect(() => {
     if (step !== 2) {
-      cameraRequestedRef.current = false;
       return;
     }
     if (!stream && !cameraRequestedRef.current) {
@@ -60,6 +68,15 @@ export function Onboarding({
     step < 2 ||
     (step === 2 && Boolean(stream && selectedCameraId)) ||
     (step === 3 && hasCalibration);
+  const continueToNextStep = (): void => {
+    if (step === 1) {
+      cameraRequestedRef.current = true;
+      setStep(2);
+      onOpenCamera();
+      return;
+    }
+    setStep((value) => value + 1);
+  };
 
   return (
     <main className="onboarding-shell">
@@ -73,17 +90,21 @@ export function Onboarding({
         <span>Setup takes about a minute</span>
       </div>
       <section className="onboarding-panel">
-        <div
+        <ol
           className="step-track"
           aria-label={`Step ${step + 1} of ${steps.length}`}
         >
           {steps.map((label, index) => (
-            <span key={label} className={index <= step ? "complete" : ""}>
+            <li
+              key={label}
+              className={index <= step ? "complete" : ""}
+              aria-current={index === step ? "step" : undefined}
+            >
               <i />
               {label}
-            </span>
+            </li>
           ))}
-        </div>
+        </ol>
         <div className="onboarding-content">
           {step === 0 && (
             <Intro
@@ -118,9 +139,12 @@ export function Onboarding({
                 <select
                   value={selectedCameraId ?? ""}
                   onChange={(event) => onSelectCamera(event.target.value)}
+                  disabled={!stream && devices.length === 0}
                 >
                   <option value="" disabled>
-                    Select a camera
+                    {devices.length === 0
+                      ? "Looking for cameras"
+                      : "Select a camera"}
                   </option>
                   {devices.map((device) => (
                     <option key={device.deviceId} value={device.deviceId}>
@@ -129,6 +153,12 @@ export function Onboarding({
                   ))}
                 </select>
               </label>
+              {stream && devices.length === 0 && (
+                <p className="supporting-copy">
+                  Camera access is active, but this system has not exposed the
+                  camera name yet. You can continue with the current camera.
+                </p>
+              )}
               {!stream && (
                 <button
                   className="button button-secondary"
@@ -140,6 +170,16 @@ export function Onboarding({
                   Try camera again
                 </button>
               )}
+              {(cameraAccessStatus === "denied" ||
+                cameraAccessStatus === "restricted") &&
+                canOpenCameraSettings && (
+                  <button
+                    className="text-button"
+                    onClick={onOpenCameraSettings}
+                  >
+                    Open camera privacy settings
+                  </button>
+                )}
               {error && (
                 <p className="inline-error" role="alert">
                   {error}
@@ -162,6 +202,10 @@ export function Onboarding({
               <CameraPreview stream={stream} compact />
               <div
                 className="calibration-progress large"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={progress}
                 aria-label={`Calibration ${progress}% complete`}
               >
                 <span style={{ width: `${progress}%` }} />
@@ -193,7 +237,10 @@ export function Onboarding({
           <button
             className="button button-quiet"
             disabled={step === 0}
-            onClick={() => setStep((value) => value - 1)}
+            onClick={() => {
+              if (step === 2) onCloseCamera();
+              setStep((value) => value - 1);
+            }}
           >
             <ArrowLeft size={17} /> Back
           </button>
@@ -206,7 +253,7 @@ export function Onboarding({
               <button
                 className="button button-primary"
                 disabled={!canContinue}
-                onClick={() => setStep((value) => value + 1)}
+                onClick={continueToNextStep}
               >
                 Continue <ArrowRight size={17} />
               </button>

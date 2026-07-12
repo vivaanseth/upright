@@ -7,6 +7,10 @@ import { Onboarding } from "./screens/Onboarding";
 import { Settings } from "./screens/Settings";
 import { useAppStore } from "./store";
 
+const safely = (operation: Promise<unknown>): void => {
+  void operation.catch(() => undefined);
+};
+
 export function App(): React.JSX.Element {
   const store = useAppStore();
   const controller = useTrackingController();
@@ -40,13 +44,19 @@ export function App(): React.JSX.Element {
         selectedCameraId={store.settings.selectedCameraId}
         progress={controller.calibrationProgress}
         calibrating={controller.calibrating}
+        cameraAccessStatus={controller.cameraAccessStatus}
+        canOpenCameraSettings={store.appInfo?.platform !== "linux"}
         error={controller.calibrationError ?? store.cameraError}
         hasCalibration={Boolean(selectedCalibration)}
         onOpenCamera={() =>
-          void controller.openCamera(store.settings.selectedCameraId)
+          safely(controller.openCamera(store.settings.selectedCameraId))
         }
-        onSelectCamera={(id) => void controller.selectCamera(id)}
-        onCalibrate={() => void controller.beginCalibration()}
+        onCloseCamera={controller.closePreview}
+        onOpenCameraSettings={() =>
+          safely(controller.openSystemPrivacySettings())
+        }
+        onSelectCamera={(id) => safely(controller.selectCamera(id))}
+        onCalibrate={() => safely(controller.beginCalibration())}
         onComplete={() => {
           void store
             .completeOnboarding()
@@ -58,7 +68,19 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="app-shell">
-      <Sidebar view={store.view} onChange={store.setView} />
+      <Sidebar
+        view={store.view}
+        onChange={(view) => {
+          if (
+            store.view === "diagnostics" &&
+            view !== "diagnostics" &&
+            !store.tracking
+          ) {
+            controller.closePreview();
+          }
+          store.setView(view);
+        }}
+      />
       <main className="content-shell">
         {store.view === "dashboard" && (
           <Dashboard
@@ -83,17 +105,17 @@ export function App(): React.JSX.Element {
             progress={controller.calibrationProgress}
             error={controller.calibrationError ?? store.cameraError}
             workerReady={controller.workerReady}
-            onSelectCamera={(id) => void controller.selectCamera(id)}
+            onSelectCamera={(id) => safely(controller.selectCamera(id))}
             onOpenCamera={() =>
-              void controller.openCamera(store.settings.selectedCameraId)
+              safely(controller.openCamera(store.settings.selectedCameraId))
             }
-            onCalibrate={() => void controller.beginCalibration()}
+            onCalibrate={() => safely(controller.beginCalibration())}
           />
         )}
         {store.view === "settings" && (
           <Settings
             settings={store.settings}
-            version={store.appInfo?.version ?? "0.1.0"}
+            version={store.appInfo?.version ?? "0.1.1"}
             onUpdate={(patch) => void store.updateSettings(patch)}
           />
         )}

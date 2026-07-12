@@ -11,24 +11,32 @@ import {
   screen,
   session,
   shell,
+  systemPreferences,
   Tray,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from "electron";
-import { join, normalize } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import {
   appInfoSchema,
   calibrationSchema,
+  cameraAccessStatusSchema,
   settingsSchema,
   trackingSnapshotSchema,
   type PostureState,
   type Settings,
   type TrackingCommand,
   type TrustedUrlKind,
+  type CameraAccessStatus,
 } from "../shared/contracts";
 import { ReminderPolicy, SessionAccumulator } from "../shared/session-engine";
+import {
+  isTrustedRendererUrl,
+  isVideoOnlyMediaRequest,
+  resolveRendererAsset,
+} from "./security";
 import { LocalStore } from "./storage";
 
 protocol.registerSchemesAsPrivileged([
@@ -69,8 +77,10 @@ let resumeAfterWake = false;
 let pauseTimer: NodeJS.Timeout | null = null;
 
 const allowOrigin = (url: string): boolean =>
-  url.startsWith("app://posture") ||
-  (!app.isPackaged && url.startsWith("http://localhost:"));
+  isTrustedRendererUrl(url, {
+    isPackaged: app.isPackaged,
+    developmentUrl: process.env.ELECTRON_RENDERER_URL,
+  });
 
 function validateSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
   const url = event.senderFrame?.url ?? event.sender.getURL();
@@ -317,7 +327,7 @@ function configurePermissions(): void {
     (_webContents, permission, requestingOrigin, details) => {
       return (
         permission === "media" &&
-        details.mediaType === "video" &&
+        details.mediaType !== "audio" &&
         allowOrigin(requestingOrigin)
       );
     },
@@ -327,12 +337,51 @@ function configurePermissions(): void {
       const mediaTypes = "mediaTypes" in details ? details.mediaTypes : [];
       const allowed =
         permission === "media" &&
-        mediaTypes?.includes("video") === true &&
-        mediaTypes?.includes("audio") !== true &&
+        isVideoOnlyMediaRequest(mediaTypes) &&
         allowOrigin(webContents.getURL());
       callback(allowed);
     },
   );
+}
+
+function getCameraAccessStatus(): CameraAccessStatus {
+  if (process.env.NODE_ENV === "test") {
+    return cameraAccessStatusSchema
+      .catch("granted")
+      .parse(process.env.POSTURE_TEST_CAMERA_STATUS);
+  }
+  if (process.platform !== "darwin" && process.platform !== "win32")
+    return "granted";
+  try {
+    return systemPreferences.getMediaAccessStatus("camera");
+  } catch {
+    return "unknown";
+  }
+}
+
+async function requestCameraAccess(): Promise<CameraAccessStatus> {
+  const status = getCameraAccessStatus();
+  if (status !== "not-determined") return status;
+  if (process.platform !== "darwin") return "granted";
+  try {
+    return (await systemPreferences.askForMediaAccess("camera"))
+      ? "granted"
+      : getCameraAccessStatus();
+  } catch {
+    return getCameraAccessStatus();
+  }
+}
+
+async function openCameraPrivacySettings(): Promise<boolean> {
+  const target =
+    process.platform === "darwin"
+      ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
+      : process.platform === "win32"
+        ? "ms-settings:privacy-webcam"
+        : null;
+  if (!target) return false;
+  await shell.openExternal(target);
+  return true;
 }
 
 function configureIpc(): void {
@@ -350,6 +399,11 @@ function configureIpc(): void {
       .parse(input) as TrustedUrlKind;
     await shell.openExternal(trustedUrls[kind]);
   });
+  handle("camera:get-access-status", () => getCameraAccessStatus());
+  handle("camera:request-access", () => requestCameraAccess());
+  handle("camera:open-system-privacy-settings", () =>
+    openCameraPrivacySettings(),
+  );
   handle("tracking:start", async () => {
     await startSession();
     sendCommand({ type: "start" });
@@ -376,8 +430,14 @@ function configureIpc(): void {
   handle("settings:get", () => store.getSettings());
   handle("settings:update", async (_event, input) => {
     const patch = settingsSchema.partial().parse(input);
+    const previousLaunchAtLogin = settings.launchAtLogin;
     settings = await store.updateSettings(patch);
-    app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
+    if (
+      patch.launchAtLogin !== undefined &&
+      previousLaunchAtLogin !== settings.launchAtLogin
+    ) {
+      app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
+    }
     return settings;
   });
   handle("calibrations:list", () => store.getCalibrations());
@@ -429,16 +489,34 @@ function configureIpc(): void {
   handle("updates:open", () => shell.openExternal(trustedUrls.releases));
 }
 
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "worker-src 'self' blob:",
+  "connect-src 'self'",
+  "font-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
 function registerAppProtocol(): void {
-  protocol.handle("app", (request) => {
-    const requestUrl = new URL(request.url);
-    const requested = decodeURIComponent(
-      requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname,
-    );
-    const safePath = normalize(requested)
-      .replace(/^(\.\.(\/|\\|$))+/, "")
-      .replace(/^[/\\]+/, "");
-    return net.fetch(pathToFileURL(join(RENDERER_ROOT, safePath)).toString());
+  protocol.handle("app", async (request) => {
+    const assetPath = resolveRendererAsset(RENDERER_ROOT, request.url);
+    if (!assetPath)
+      return new Response("Invalid application URL.", { status: 400 });
+    const response = await net.fetch(pathToFileURL(assetPath).toString());
+    const headers = new Headers(response.headers);
+    headers.set("Content-Security-Policy", contentSecurityPolicy);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   });
 }
 

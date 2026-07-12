@@ -126,10 +126,25 @@ export type TrustedUrlKind =
   | "privacy"
   | "mediapipe";
 
+export const cameraAccessStatusSchema = z.enum([
+  "not-determined",
+  "granted",
+  "denied",
+  "restricted",
+  "unknown",
+]);
+
+export type CameraAccessStatus = z.infer<typeof cameraAccessStatusSchema>;
+
 export interface PostureApi {
   app: {
     getInfo: () => Promise<AppInfo>;
     openExternalTrustedUrl: (kind: TrustedUrlKind) => Promise<void>;
+  };
+  camera: {
+    getAccessStatus: () => Promise<CameraAccessStatus>;
+    requestAccess: () => Promise<CameraAccessStatus>;
+    openSystemPrivacySettings: () => Promise<boolean>;
   };
   tracking: {
     start: () => Promise<void>;
