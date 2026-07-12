@@ -5,8 +5,10 @@ import { join } from "node:path";
 
 test("launches the secure onboarding flow", async () => {
   const userData = await mkdtemp(join(tmpdir(), "posture-e2e-"));
+  const linuxSandboxArgs = process.platform === "linux" ? ["--no-sandbox"] : [];
   const app = await electron.launch({
     args: [
+      ...linuxSandboxArgs,
       "--use-fake-device-for-media-stream",
       "--use-fake-ui-for-media-stream",
       `--user-data-dir=${userData}`,
