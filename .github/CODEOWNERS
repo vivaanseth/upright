@@ -1,0 +1,8 @@
+# Default ownership for application code, packaging, documentation, and policy.
+* @vivaanseth
+
+# Security- and release-sensitive paths remain explicitly owned.
+/.github/workflows/ @vivaanseth
+/src/main/ @vivaanseth
+/src/preload/ @vivaanseth
+/SECURITY.md @vivaanseth
