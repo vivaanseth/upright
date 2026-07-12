@@ -87,6 +87,7 @@ export function useTrackingController() {
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const frameCanvasRef = useRef<OffscreenCanvas | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const workerDeferredRef = useRef<WorkerDeferred | null>(null);
   const workerReadyRef = useRef(false);
@@ -400,7 +401,21 @@ export function useTrackingController() {
         return;
       }
       frameBusyRef.current = true;
-      const bitmap = await createImageBitmap(videoRef.current);
+      const video = videoRef.current;
+      let bitmap: ImageBitmap;
+      if (navigator.userAgent.includes("Linux")) {
+        const canvas = frameCanvasRef.current ?? new OffscreenCanvas(640, 480);
+        frameCanvasRef.current = canvas;
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        const context = canvas.getContext("2d", { alpha: false });
+        if (!context)
+          throw new Error("A camera frame canvas could not be created.");
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        bitmap = canvas.transferToImageBitmap();
+      } else {
+        bitmap = await createImageBitmap(video);
+      }
       const worker = workerRef.current;
       if (!worker) {
         bitmap.close();
@@ -421,12 +436,14 @@ export function useTrackingController() {
         frameBusyRef.current = false;
         void restartWorker();
       }, 2_500);
-    } catch {
+    } catch (error) {
       frameBusyRef.current = false;
       frameFailureCountRef.current += 1;
       if (frameFailureCountRef.current >= 3)
         setCameraError(
-          "Posture could not read camera frames. Reconnect the camera and retry.",
+          `Camera frames could not be sampled: ${
+            error instanceof Error ? error.message : "unknown frame error"
+          }`,
         );
     } finally {
       scheduleSample();
