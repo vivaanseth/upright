@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { powerStateSchema, trackingRuntimeStateSchema } from "./contracts";
+import {
+  powerStateSchema,
+  trackingRuntimeStateSchema,
+  trackingSnapshotReportSchema,
+} from "./contracts";
 
 describe("runtime contracts", () => {
   it("requires exact camera and calibration identity while tracking", () => {
@@ -28,5 +32,24 @@ describe("runtime contracts", () => {
     expect(
       powerStateSchema.safeParse({ onBattery: true, updatedAt: 1 }).success,
     ).toBe(true);
+  });
+
+  it("keeps renderer posture reports timestamp-free", () => {
+    const report = {
+      state: "poor",
+      score: 25,
+      confidence: 0.91,
+      inferenceMs: 42,
+      sampledFps: 5,
+      breakdown: null,
+      message: "Leaning forward",
+    };
+    expect(trackingSnapshotReportSchema.parse(report)).toEqual(report);
+    expect(
+      trackingSnapshotReportSchema.safeParse({
+        ...report,
+        timestamp: 123,
+      }).success,
+    ).toBe(false);
   });
 });

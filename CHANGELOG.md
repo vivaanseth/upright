@@ -2,6 +2,24 @@
 
 All notable changes follow semantic versioning.
 
+## 0.5.2 - 2026-07-13
+
+### Fixed
+
+- Use main-process monotonic time for posture reports, sessions, and reminder timing so reminders are not suppressed by cross-process clock differences.
+- Stop successful camera streams and initialized pose workers when concurrent camera or worker startup fails.
+- Cancel in-progress calibration when users navigate back, leave calibration surfaces, hide setup before tracking owns the camera, pause, stop, reset, or quit.
+- Make the reminder sound setting functional with a bundled local-only sound.
+- Restore adaptive sampling recovery toward higher FPS with a rolling ten-second latency and drop-rate window.
+- Tighten media permission checks to explicit video-only requests.
+- Handle missing application protocol assets with controlled 404 responses.
+
+### Changed
+
+- Move runtime packages into production dependencies so production audits and release SBOM inputs reflect the app's real runtime dependency set.
+- Add a fallback license-audit path for pnpm stores with unavailable license index metadata.
+- Allow the reminder nudge to become focusable after user interaction while keeping its initial display non-focus-stealing.
+
 ## 0.5.1 - 2026-07-12
 
 ### Fixed

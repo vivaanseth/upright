@@ -35,6 +35,18 @@ describe("renderer trust boundary", () => {
     expect(isTrustedRendererUrl("http://127.0.0.1:5173/", development)).toBe(
       false,
     );
+    expect(
+      isTrustedRendererUrl("https://localhost:5173/", {
+        isPackaged: false,
+        developmentUrl: "https://localhost:5173",
+      }),
+    ).toBe(false);
+    expect(
+      isTrustedRendererUrl("http://192.168.1.5:5173/", {
+        isPackaged: false,
+        developmentUrl: "http://192.168.1.5:5173",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -64,11 +76,12 @@ describe("application protocol", () => {
 
 describe("media permission scope", () => {
   it("allows video-only requests and rejects audio", () => {
-    expect(isVideoOnlyMediaRequest(undefined)).toBe(true);
-    expect(isVideoOnlyMediaRequest([])).toBe(true);
+    expect(isVideoOnlyMediaRequest(undefined)).toBe(false);
+    expect(isVideoOnlyMediaRequest([])).toBe(false);
     expect(isVideoOnlyMediaRequest(["video"])).toBe(true);
     expect(isVideoOnlyMediaRequest(["audio"])).toBe(false);
     expect(isVideoOnlyMediaRequest(["video", "audio"])).toBe(false);
+    expect(isVideoOnlyMediaRequest(["display-capture"])).toBe(false);
   });
 });
 

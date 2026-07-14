@@ -162,14 +162,14 @@ jobs:
         run: |
           find . -maxdepth 1 -type f ! -name SHASUMS256.txt -printf '%f\0' | sort -z | xargs -0 sha256sum > SHASUMS256.txt
           sha256sum --check SHASUMS256.txt
-      - name: Create draft prerelease
+      - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           version="${VERSION#v}"
           notes="docs/releases/v${version}.md"
-          args=(release create "$VERSION" release-assets/* --draft --prerelease --title "Posture $VERSION")
+          args=(release create "$VERSION" release-assets/* --latest --title "Posture $VERSION")
           if [[ -f "$notes" ]]; then
             args+=(--notes-file "$notes")
           else

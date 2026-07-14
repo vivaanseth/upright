@@ -187,6 +187,14 @@ export const trackingSnapshotSchema = z.object({
 });
 
 export type TrackingSnapshot = z.infer<typeof trackingSnapshotSchema>;
+export const trackingSnapshotReportSchema = trackingSnapshotSchema
+  .omit({
+    timestamp: true,
+  })
+  .strict();
+export type TrackingSnapshotReport = z.infer<
+  typeof trackingSnapshotReportSchema
+>;
 
 const sessionSummaryFields = {
   id: z.string().uuid(),
@@ -275,9 +283,10 @@ export interface PostureApi {
     pause: (reason?: string) => Promise<void>;
     resume: () => Promise<void>;
     stop: () => Promise<void>;
-    reportSnapshot: (snapshot: TrackingSnapshot) => void;
+    reportSnapshot: (snapshot: TrackingSnapshotReport) => void;
     reportRuntimeState: (state: TrackingRuntimeState) => void;
     onCommand: (listener: (command: TrackingCommand) => void) => () => void;
+    cancelCalibration: () => Promise<void>;
   };
   settings: {
     get: () => Promise<Settings>;
@@ -311,6 +320,7 @@ export interface PostureApi {
   nudge: {
     dismiss: () => Promise<void>;
     pauseForMinutes: (minutes: 10 | 30 | 60) => Promise<void>;
+    enableInteraction: () => Promise<void>;
   };
   updates: {
     openLatestRelease: () => Promise<void>;
@@ -323,7 +333,9 @@ export type TrackingCommand =
   | { type: "resume" }
   | { type: "stop" }
   | { type: "recalibrate" }
-  | { type: "open-settings" };
+  | { type: "open-settings" }
+  | { type: "cancel-calibration" }
+  | { type: "window-hidden" };
 
 declare global {
   interface Window {

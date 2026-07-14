@@ -16,6 +16,7 @@ import {
   type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from "electron";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
@@ -25,6 +26,7 @@ import {
   cameraAccessStatusSchema,
   powerStateSchema,
   settingsSchema,
+  trackingSnapshotReportSchema,
   trackingRuntimeStateSchema,
   trackingSnapshotSchema,
   type PostureState,
@@ -89,6 +91,7 @@ let reminderPolicy: ReminderPolicy | null = null;
 let lastSessionSaveAt = 0;
 let resumeAfterWake = false;
 let pauseTimer: NodeJS.Timeout | null = null;
+let pauseGeneration = 0;
 let nudgeTimer: NodeJS.Timeout | null = null;
 let lastSnapshotReceivedAt = 0;
 let autoStartPending = false;
@@ -151,6 +154,7 @@ function createMainWindow(): BrowserWindow {
   window.on("close", (event) => {
     if (!quitting) {
       event.preventDefault();
+      sendCommand({ type: "window-hidden" });
       window.hide();
     }
   });
@@ -300,7 +304,12 @@ function showNudge(): void {
     nudgeWindow = null;
   });
   void nudgeWindow.loadURL(
-    rendererUrl("#nudge", `?theme=${encodeURIComponent(settings.theme)}`),
+    rendererUrl(
+      "#nudge",
+      `?theme=${encodeURIComponent(settings.theme)}&sound=${
+        settings.soundEnabled ? "1" : "0"
+      }`,
+    ),
   );
   scheduleNudgeClose();
 }
@@ -321,18 +330,28 @@ function pauseForMinutes(minutes: 10 | 30 | 60): void {
   dismissNudge();
   sendCommand({ type: "pause", reason: `${minutes}-minute break` });
   if (pauseTimer) clearTimeout(pauseTimer);
-  pauseTimer = setTimeout(
-    () => sendCommand({ type: "resume" }),
-    minutes * 60_000,
-  );
+  const generation = ++pauseGeneration;
+  pauseTimer = setTimeout(() => {
+    if (generation !== pauseGeneration) return;
+    sendCommand({ type: "resume" });
+    pauseTimer = null;
+  }, minutes * 60_000);
   pauseTimer.unref();
+}
+
+function cancelPendingAutoResume(): void {
+  pauseGeneration += 1;
+  if (!pauseTimer) return;
+  clearTimeout(pauseTimer);
+  pauseTimer = null;
 }
 
 async function startSession(calibrationId: string): Promise<void> {
   if (currentSession?.getSummary().calibrationId === calibrationId) return;
   if (currentSession) await endSession();
+  const now = performance.now();
   currentSession = new SessionAccumulator(calibrationId);
-  reminderPolicy = new ReminderPolicy();
+  reminderPolicy = new ReminderPolicy(now);
 }
 
 async function endSession(): Promise<void> {
@@ -343,7 +362,10 @@ async function endSession(): Promise<void> {
 }
 
 async function receiveSnapshot(snapshotInput: unknown): Promise<void> {
-  const snapshot = trackingSnapshotSchema.parse(snapshotInput);
+  const snapshot = trackingSnapshotSchema.parse({
+    ...trackingSnapshotReportSchema.parse(snapshotInput),
+    timestamp: performance.now(),
+  });
   lastState = snapshot.state;
   rebuildTray();
   if (!currentSession) return;
@@ -391,6 +413,11 @@ async function receiveRuntimeState(input: unknown): Promise<void> {
     currentSession?.suspend();
     reminderPolicy?.suspend();
   }
+  if (runtime.mode !== "tracking" && runtime.mode !== "paused" && pauseTimer) {
+    pauseGeneration += 1;
+    clearTimeout(pauseTimer);
+    pauseTimer = null;
+  }
   if (runtime.mode === "stopped") await endSession();
   rebuildTray();
   if (autoStartPending && runtime.mode === "stopped") {
@@ -417,7 +444,7 @@ function configurePermissions(): void {
     (_webContents, permission, requestingOrigin, details) => {
       return (
         permission === "media" &&
-        details.mediaType !== "audio" &&
+        details.mediaType === "video" &&
         allowOrigin(requestingOrigin)
       );
     },
@@ -496,17 +523,25 @@ function configureIpc(): void {
     openCameraPrivacySettings(),
   );
   handle("tracking:start", () => sendCommand({ type: "start" }));
-  handle("tracking:pause", (_event, reason) =>
-    sendCommand({
+  handle("tracking:pause", (_event, reason) => {
+    cancelPendingAutoResume();
+    return sendCommand({
       type: "pause",
       reason: z.string().max(120).optional().parse(reason),
-    }),
-  );
-  handle("tracking:resume", () => sendCommand({ type: "resume" }));
+    });
+  });
+  handle("tracking:resume", () => {
+    cancelPendingAutoResume();
+    sendCommand({ type: "resume" });
+  });
   handle("tracking:stop", async () => {
+    cancelPendingAutoResume();
     sendCommand({ type: "stop" });
     await endSession();
   });
+  handle("tracking:cancel-calibration", () =>
+    sendCommand({ type: "cancel-calibration" }),
+  );
   ipcMain.on("tracking:snapshot", (event, input) => {
     try {
       validateSender(event);
@@ -569,12 +604,16 @@ function configureIpc(): void {
   });
   handle("data:delete-sessions", () => store.deleteSessions());
   handle("data:reset-all", async () => {
+    cancelPendingAutoResume();
     await endSession();
     await store.resetAll();
     settings = await store.getSettings();
   });
   handle("storage:get-recoveries", () => [...pendingRecoveryNotices]);
-  handle("window:hide", () => mainWindow?.hide());
+  handle("window:hide", () => {
+    sendCommand({ type: "window-hidden" });
+    mainWindow?.hide();
+  });
   handle("window:open-main", () => {
     dismissNudge();
     showMainWindow();
@@ -589,6 +628,10 @@ function configureIpc(): void {
       z.union([z.literal(10), z.literal(30), z.literal(60)]).parse(input),
     ),
   );
+  handle("nudge:enable-interaction", () => {
+    if (!nudgeWindow || nudgeWindow.isDestroyed()) return;
+    nudgeWindow.setFocusable(true);
+  });
   handle("updates:open", () => shell.openExternal(trustedUrls.releases));
 }
 
@@ -612,6 +655,13 @@ function registerAppProtocol(): void {
     const assetPath = resolveRendererAsset(RENDERER_ROOT, request.url);
     if (!assetPath)
       return new Response("Invalid application URL.", { status: 400 });
+    try {
+      const asset = await stat(assetPath);
+      if (!asset.isFile())
+        return new Response("Application asset not found.", { status: 404 });
+    } catch {
+      return new Response("Application asset not found.", { status: 404 });
+    }
     const response = await net.fetch(pathToFileURL(assetPath).toString());
     const headers = new Headers(response.headers);
     headers.set("Content-Security-Policy", contentSecurityPolicy);
@@ -648,6 +698,7 @@ else {
 
     powerMonitor.on("suspend", () => {
       resumeAfterWake = lastRuntimeState.mode === "tracking";
+      cancelPendingAutoResume();
       sendCommand({ type: "pause", reason: "computer sleep" });
     });
     powerMonitor.on("resume", () => {
@@ -660,6 +711,7 @@ else {
 
 app.on("before-quit", (event) => {
   quitting = true;
+  cancelPendingAutoResume();
   if (quitFlushed || !store) return;
   event.preventDefault();
   if (quitFlushStarted) return;
