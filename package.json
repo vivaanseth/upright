@@ -3,6 +3,7 @@
   "version": "0.5.2",
   "description": "A private, local-only posture companion for macOS, Windows, and Linux.",
   "main": "out/main/index.js",
+  "desktopName": "Posture",
   "author": {
     "name": "Posture Contributors",
     "email": "vivaanseth@users.noreply.github.com"
@@ -99,6 +100,7 @@
     },
     "files": [
       "out/**/*",
+      "!node_modules/**/*",
       "package.json",
       "LICENSE",
       "THIRD_PARTY_NOTICES.md"
