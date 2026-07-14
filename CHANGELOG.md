@@ -2,6 +2,16 @@
 
 All notable changes follow semantic versioning.
 
+## 0.5.4 - 2026-07-14
+
+### Fixed
+
+- Disable the SBOM action's extra default artifact upload so the release job publishes only the expected platform installers, platform SBOMs, and checksum manifest.
+
+### Release note
+
+- Supersedes the failed `v0.5.3` tag workflow attempt. No `v0.5.3` GitHub release was published.
+
 ## 0.5.3 - 2026-07-14
 
 ### Fixed
