@@ -2,6 +2,17 @@
 
 All notable changes follow semantic versioning.
 
+## 0.5.3 - 2026-07-14
+
+### Fixed
+
+- Preserve the `v0.5.2` runtime dependency audit/SBOM split while excluding already-bundled runtime `node_modules` from packaged ASAR files.
+- Add Linux desktop metadata so desktop environments can associate running Posture windows with the installed launcher.
+
+### Release note
+
+- Supersedes the failed `v0.5.2` tag workflow attempt. No `v0.5.2` GitHub release was published.
+
 ## 0.5.2 - 2026-07-13
 
 ### Fixed
