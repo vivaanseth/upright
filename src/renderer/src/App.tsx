@@ -65,10 +65,13 @@ export function App(): React.JSX.Element {
         }
         onSelectCamera={(id) => safely(controller.selectCamera(id))}
         onCalibrate={() => safely(controller.beginCalibration())}
+        onCancelCalibration={controller.cancelCalibration}
         onComplete={() => {
-          void store
-            .completeOnboarding()
-            .then(() => window.posture.tracking.start());
+          safely(
+            store
+              .completeOnboarding()
+              .then(() => window.posture.tracking.start()),
+          );
         }}
       />
     );
@@ -132,12 +135,13 @@ export function App(): React.JSX.Element {
               safely(controller.openCamera(store.settings.selectedCameraId))
             }
             onCalibrate={() => safely(controller.beginCalibration())}
+            onCancelCalibration={controller.cancelCalibration}
           />
         )}
         {store.view === "settings" && (
           <Settings
             settings={store.settings}
-            version={store.appInfo?.version ?? "0.5.1"}
+            version={store.appInfo?.version ?? "0.5.2"}
             calibrations={store.calibrations}
             onUpdate={store.updateSettings}
             onOpenDiagnostics={() => store.setView("diagnostics")}

@@ -82,6 +82,20 @@ describe("ReminderPolicy", () => {
     expect(policy.update(snapshot("poor", 91_001, 30), 30, 10)).toBe(true);
   });
 
+  it("uses one monotonic clock for startup suppression and reminder timing", () => {
+    const mainStartedAt = 2_000_000;
+    const policy = new ReminderPolicy(mainStartedAt);
+    expect(
+      policy.update(snapshot("poor", mainStartedAt + 59_999, 30), 30, 10),
+    ).toBe(false);
+    expect(
+      policy.update(snapshot("poor", mainStartedAt + 60_000, 30), 30, 10),
+    ).toBe(false);
+    expect(
+      policy.update(snapshot("poor", mainStartedAt + 90_000, 30), 30, 10),
+    ).toBe(true);
+  });
+
   it("resets poor accumulation after five seconds of good posture", () => {
     const policy = new ReminderPolicy(0);
     policy.update(snapshot("poor", 61_000, 30), 30, 10);

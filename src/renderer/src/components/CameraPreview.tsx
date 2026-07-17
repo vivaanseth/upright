@@ -13,7 +13,7 @@ export function CameraPreview({
   useEffect(() => {
     if (!ref.current) return;
     ref.current.srcObject = stream;
-    if (stream) void ref.current.play();
+    if (stream) void ref.current.play().catch(() => undefined);
   }, [stream]);
 
   return (

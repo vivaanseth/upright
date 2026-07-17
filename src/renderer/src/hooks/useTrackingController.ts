@@ -4,6 +4,7 @@ import type {
   CameraAccessStatus,
   PostureFeatures,
   PowerState,
+  TrackingSnapshot,
   TrackingCommand,
   TrackingMode,
 } from "../../../shared/contracts";
@@ -42,6 +43,18 @@ const createDeferred = (): WorkerDeferred => {
 
 const wait = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+const reportSnapshotToMain = (snapshot: TrackingSnapshot): void => {
+  window.posture.tracking.reportSnapshot({
+    state: snapshot.state,
+    score: snapshot.score,
+    confidence: snapshot.confidence,
+    inferenceMs: snapshot.inferenceMs,
+    sampledFps: snapshot.sampledFps,
+    breakdown: snapshot.breakdown,
+    message: snapshot.message,
+  });
+};
 
 export function normalizeCameraDevices(
   devices: MediaDeviceInfo[],
@@ -97,7 +110,7 @@ export function useTrackingController() {
   const watchdogTimerRef = useRef<number | null>(null);
   const frameBusyRef = useRef(false);
   const frameFailureCountRef = useRef(0);
-  const droppedFramesRef = useRef(0);
+  const droppedFrameTimesRef = useRef<number[]>([]);
   const resultTimesRef = useRef<number[]>([]);
   const latencyEwmaRef = useRef<number | null>(null);
   const classifierRef = useRef(new PostureClassifier());
@@ -203,15 +216,20 @@ export function useTrackingController() {
   }, [disposeWorker, stopCameraTracks]);
 
   const closePreview = useCallback(() => {
-    if (modeRef.current !== "preview") return;
+    if (modeRef.current !== "preview" && modeRef.current !== "calibrating")
+      return;
     reportMode("stopped", null, null);
+    setCalibrating(false);
+    setCalibrationProgress(0);
+    calibrationSamplesRef.current = [];
+    calibrationRejectedFramesRef.current = 0;
     stopCamera();
   }, [reportMode, stopCamera]);
 
   const measuredFps = useCallback((now: number): number => {
     resultTimesRef.current.push(now);
     resultTimesRef.current = resultTimesRef.current.filter(
-      (timestamp) => now - timestamp <= 2_000,
+      (timestamp) => now - timestamp <= 10_000,
     );
     if (resultTimesRef.current.length < 2) return 0;
     const duration = now - resultTimesRef.current[0];
@@ -220,6 +238,20 @@ export function useTrackingController() {
       : Math.round(
           ((resultTimesRef.current.length - 1) / duration) * 1_000 * 10,
         ) / 10;
+  }, []);
+
+  const rollingDropRate = useCallback((now: number): number => {
+    resultTimesRef.current = resultTimesRef.current.filter(
+      (timestamp) => now - timestamp <= 10_000,
+    );
+    droppedFrameTimesRef.current = droppedFrameTimesRef.current.filter(
+      (timestamp) => now - timestamp <= 10_000,
+    );
+    const attemptedFrames =
+      droppedFrameTimesRef.current.length + resultTimesRef.current.length;
+    return attemptedFrames === 0
+      ? 0
+      : droppedFrameTimesRef.current.length / attemptedFrames;
   }, []);
 
   const handleWorkerResult = useCallback(
@@ -260,10 +292,7 @@ export function useTrackingController() {
       setSnapshot(snapshot);
       if (message.timestamp - lastReportRef.current >= 750) {
         lastReportRef.current = message.timestamp;
-        window.posture.tracking.reportSnapshot({
-          ...snapshot,
-          timestamp: performance.now(),
-        });
+        reportSnapshotToMain(snapshot);
       }
     },
     [clearWatchdog, measuredFps, setSnapshot],
@@ -340,17 +369,22 @@ export function useTrackingController() {
     if (
       (settings.reduceOnBattery && powerStateRef.current.onBattery) ||
       (latencyEwmaRef.current ?? 0) > 150 ||
-      droppedFramesRef.current > 8
+      rollingDropRate(performance.now()) > 0.2
     )
       return 3;
+    const oldestResult = resultTimesRef.current[0];
+    const hasTenSecondsOfHeadroom =
+      oldestResult !== undefined && performance.now() - oldestResult >= 10_000;
     if (
       !powerStateRef.current.onBattery &&
       resultTimesRef.current.length >= 20 &&
-      (latencyEwmaRef.current ?? Number.POSITIVE_INFINITY) < 80
+      hasTenSecondsOfHeadroom &&
+      (latencyEwmaRef.current ?? Number.POSITIVE_INFINITY) < 80 &&
+      rollingDropRate(performance.now()) < 0.05
     )
       return 8;
     return 5;
-  }, [settings.reduceOnBattery]);
+  }, [rollingDropRate, settings.reduceOnBattery]);
 
   const restartWorker = useCallback(async () => {
     if (workerRestartCountRef.current >= 3) {
@@ -397,7 +431,7 @@ export function useTrackingController() {
       )
         return;
       if (frameBusyRef.current) {
-        droppedFramesRef.current += 1;
+        droppedFrameTimesRef.current.push(performance.now());
         return;
       }
       frameBusyRef.current = true;
@@ -456,7 +490,7 @@ export function useTrackingController() {
 
   const startSampler = useCallback(() => {
     stopSampler();
-    droppedFramesRef.current = 0;
+    droppedFrameTimesRef.current = [];
     resultTimesRef.current = [];
     scheduleSample();
   }, [scheduleSample, stopSampler]);
@@ -512,6 +546,7 @@ export function useTrackingController() {
       if (!recovering)
         reportMode("requesting-permission", cameraId ?? null, null);
       let media: MediaStream | null = null;
+      let workerInitialized = false;
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
           throw new DOMException(
@@ -542,9 +577,16 @@ export function useTrackingController() {
           workerPromise,
           mediaPromise,
         ]);
+        if (mediaResult.status === "fulfilled") media = mediaResult.value;
+        if (workerResult.status === "fulfilled") workerInitialized = true;
         if (workerResult.status === "rejected") throw workerResult.reason;
         if (mediaResult.status === "rejected") throw mediaResult.reason;
-        const openedMedia = mediaResult.value;
+        const openedMedia = media;
+        if (!openedMedia)
+          throw new DOMException(
+            "No camera stream was created.",
+            "NotFoundError",
+          );
         media = openedMedia;
         const video = document.createElement("video");
         video.autoplay = true;
@@ -583,6 +625,7 @@ export function useTrackingController() {
           videoRef.current.srcObject = null;
         if (streamRef.current === media) streamRef.current = null;
         setStream((current) => (current === media ? null : current));
+        if (workerInitialized) disposeWorker();
         stopSampler();
         if (
           allowFallback &&
@@ -617,6 +660,7 @@ export function useTrackingController() {
     },
     [
       attachTrackRecovery,
+      disposeWorker,
       initializeWorker,
       refreshDevices,
       reportMode,
@@ -695,11 +739,22 @@ export function useTrackingController() {
     stopCamera();
     const snapshot = classifierRef.current.paused();
     setSnapshot(snapshot);
-    window.posture.tracking.reportSnapshot({
-      ...snapshot,
-      timestamp: performance.now(),
-    });
+    reportSnapshotToMain(snapshot);
   }, [reportMode, setSnapshot, stopCamera]);
+
+  const cancelCalibration = useCallback(() => {
+    if (modeRef.current !== "calibrating") return;
+    stopSampler();
+    setCalibrating(false);
+    setCalibrationProgress(0);
+    calibrationSamplesRef.current = [];
+    calibrationRejectedFramesRef.current = 0;
+    setCalibrationError(null);
+    const cameraId =
+      streamRef.current?.getVideoTracks()[0]?.getSettings().deviceId ?? null;
+    reportMode("stopped", cameraId, null, "calibration-cancelled");
+    stopCamera();
+  }, [reportMode, stopCamera, stopSampler]);
 
   const beginCalibration = useCallback(async () => {
     setCalibrationError(null);
@@ -808,8 +863,15 @@ export function useTrackingController() {
       (command: TrackingCommand) => {
         if (command.type === "start" || command.type === "resume")
           void startTrackingRef.current().catch(() => undefined);
-        if (command.type === "pause" || command.type === "stop")
-          pauseTrackingRef.current();
+        if (command.type === "pause" || command.type === "stop") {
+          if (modeRef.current === "calibrating") cancelCalibration();
+          else pauseTrackingRef.current();
+        }
+        if (command.type === "cancel-calibration") cancelCalibration();
+        if (command.type === "window-hidden") {
+          if (modeRef.current !== "tracking" && modeRef.current !== "paused")
+            closePreview();
+        }
         if (command.type === "recalibrate") {
           setView("diagnostics");
           void beginCalibrationRef.current().catch(() => undefined);
@@ -840,7 +902,14 @@ export function useTrackingController() {
       reportMode("stopped", null, null);
       stopCamera();
     };
-  }, [closePreview, refreshDevices, reportMode, setView, stopCamera]);
+  }, [
+    cancelCalibration,
+    closePreview,
+    refreshDevices,
+    reportMode,
+    setView,
+    stopCamera,
+  ]);
 
   const openSystemPrivacySettings = useCallback(async () => {
     try {
@@ -863,6 +932,7 @@ export function useTrackingController() {
     openCamera,
     stopCamera,
     closePreview,
+    cancelCalibration,
     openSystemPrivacySettings,
     startTracking,
     pauseTracking,

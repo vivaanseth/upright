@@ -22,6 +22,7 @@ const renderOnboarding = (
     onOpenCameraSettings: vi.fn(),
     onSelectCamera: vi.fn(),
     onCalibrate: vi.fn(),
+    onCancelCalibration: vi.fn(),
     onComplete: vi.fn(),
     ...overrides,
   };
@@ -67,5 +68,19 @@ describe("Onboarding", () => {
       "aria-valuenow",
       "42",
     );
+  });
+
+  it("cancels calibration when navigating back from calibration", () => {
+    const props = renderOnboarding({
+      stream: {} as MediaStream,
+      devices: [{ deviceId: "camera-1", label: "Camera 1" }],
+      selectedCameraId: "camera-1",
+      calibrating: true,
+      progress: 50,
+    });
+    advanceToCamera();
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    fireEvent.click(screen.getByRole("button", { name: /back/i }));
+    expect(props.onCancelCalibration).toHaveBeenCalledOnce();
   });
 });

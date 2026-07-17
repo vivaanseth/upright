@@ -8,7 +8,7 @@ import type {
   StorageRecoveryNotice,
   TrackingCommand,
   TrackingRuntimeState,
-  TrackingSnapshot,
+  TrackingSnapshotReport,
   TrustedUrlKind,
 } from "../shared/contracts";
 
@@ -93,10 +93,11 @@ const api: PostureApi = {
     pause: (reason?: string) => ipcRenderer.invoke("tracking:pause", reason),
     resume: () => ipcRenderer.invoke("tracking:resume"),
     stop: () => ipcRenderer.invoke("tracking:stop"),
-    reportSnapshot: (snapshot: TrackingSnapshot) =>
+    reportSnapshot: (snapshot: TrackingSnapshotReport) =>
       ipcRenderer.send("tracking:snapshot", snapshot),
     reportRuntimeState: (state: TrackingRuntimeState) =>
       ipcRenderer.send("tracking:runtime-state", state),
+    cancelCalibration: () => ipcRenderer.invoke("tracking:cancel-calibration"),
     onCommand: (listener: (command: TrackingCommand) => void) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
@@ -154,6 +155,7 @@ const api: PostureApi = {
     dismiss: () => ipcRenderer.invoke("nudge:dismiss"),
     pauseForMinutes: (minutes: 10 | 30 | 60) =>
       ipcRenderer.invoke("nudge:pause", minutes),
+    enableInteraction: () => ipcRenderer.invoke("nudge:enable-interaction"),
   },
   updates: {
     openLatestRelease: () => ipcRenderer.invoke("updates:open"),

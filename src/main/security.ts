@@ -21,10 +21,14 @@ export function isTrustedRendererUrl(
 
     if (options.isPackaged || !options.developmentUrl) return false;
     const developmentUrl = new URL(options.developmentUrl);
-    return (
-      ["http:", "https:"].includes(url.protocol) &&
-      url.origin === developmentUrl.origin
-    );
+    const isLoopbackDevelopmentHost = [
+      "localhost",
+      "127.0.0.1",
+      "::1",
+      "[::1]",
+    ].includes(developmentUrl.hostname);
+    if (!isLoopbackDevelopmentHost) return false;
+    return url.protocol === "http:" && url.origin === developmentUrl.origin;
   } catch {
     return false;
   }
@@ -58,7 +62,7 @@ export function resolveRendererAsset(
 export function isVideoOnlyMediaRequest(
   mediaTypes: readonly string[] | undefined,
 ): boolean {
-  if (!mediaTypes || mediaTypes.length === 0) return true;
+  if (!mediaTypes || mediaTypes.length === 0) return false;
   return mediaTypes.every((type) => type === "video");
 }
 

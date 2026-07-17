@@ -28,6 +28,7 @@ export function Onboarding({
   onOpenCameraSettings,
   onSelectCamera,
   onCalibrate,
+  onCancelCalibration,
   onComplete,
 }: {
   stream: MediaStream | null;
@@ -44,6 +45,7 @@ export function Onboarding({
   onOpenCameraSettings: () => void;
   onSelectCamera: (id: string) => void;
   onCalibrate: () => void;
+  onCancelCalibration: () => void;
   onComplete: () => void;
 }): React.JSX.Element {
   const [step, setStep] = useState(0);
@@ -223,6 +225,14 @@ export function Onboarding({
               >
                 {calibrating ? `Calibrating ${progress}%` : "Start calibration"}
               </button>
+              {calibrating && (
+                <button
+                  className="button button-secondary"
+                  onClick={onCancelCalibration}
+                >
+                  Cancel calibration
+                </button>
+              )}
               {error && (
                 <p className="inline-error" role="alert">
                   {error}
@@ -245,6 +255,7 @@ export function Onboarding({
             disabled={step === 0}
             onClick={() => {
               if (step === 2) onCloseCamera();
+              if (step === 3) onCancelCalibration();
               setStep((value) => value - 1);
             }}
           >

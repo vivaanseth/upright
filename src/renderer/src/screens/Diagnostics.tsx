@@ -20,6 +20,7 @@ export function Diagnostics({
   onSelectCamera,
   onOpenCamera,
   onCalibrate,
+  onCancelCalibration,
 }: {
   stream: MediaStream | null;
   devices: CameraDevice[];
@@ -32,6 +33,7 @@ export function Diagnostics({
   onSelectCamera: (id: string) => void;
   onOpenCamera: () => void;
   onCalibrate: () => void;
+  onCancelCalibration: () => void;
 }): React.JSX.Element {
   return (
     <section className="screen" aria-labelledby="camera-title">
@@ -78,6 +80,14 @@ export function Diagnostics({
             <ArrowClockwise size={18} weight="bold" />{" "}
             {calibrating ? "Hold your position" : "Calibrate now"}
           </button>
+          {calibrating && (
+            <button
+              className="button button-secondary"
+              onClick={onCancelCalibration}
+            >
+              Cancel calibration
+            </button>
+          )}
           {calibrating && (
             <div
               className="calibration-progress"
