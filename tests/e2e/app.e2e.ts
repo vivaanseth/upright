@@ -90,7 +90,50 @@ test("launches the secure onboarding flow", async () => {
       );
       throw error;
     }
+    await expect(
+      window.getByRole("heading", { name: "You are ready." }),
+    ).toBeVisible({ timeout: 20_000 });
+    const nudgeWindowPromise = app.waitForEvent("window");
+    await window.getByRole("button", { name: "Test reminder" }).click();
+    const nudge = await nudgeWindowPromise;
+    await expect(nudge.getByText("Take a moment to reset")).toBeVisible();
+    await nudge.getByRole("button", { name: "Dismiss reminder" }).click();
+    await expect.poll(() => nudge.isClosed()).toBe(true);
+    await window
+      .getByRole("button", { name: /start my first session/i })
+      .click();
+    await expect(
+      window.getByRole("heading", { name: "Stay comfortable, not perfect." }),
+    ).toBeVisible();
     await expect(window.locator("body")).not.toContainText("undefined");
+  } finally {
+    await app.close();
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test("loads the real bundled MediaPipe runtime with a fake camera", async () => {
+  test.setTimeout(60_000);
+  const userData = await mkdtemp(join(tmpdir(), "upright-e2e-mediapipe-"));
+  const app = await launch(userData, { UPRIGHT_TEST_MEDIAPIPE: "true" });
+
+  try {
+    const window = await app.firstWindow();
+    await openCameraStep(window);
+    await expect(
+      window.getByText("Camera and local posture model are ready."),
+    ).toBeVisible({ timeout: 30_000 });
+    await window.getByRole("button", { name: "Continue" }).click();
+    await window.getByRole("button", { name: "Start calibration" }).click();
+    await expect
+      .poll(
+        async () =>
+          Number(
+            await window.getByRole("progressbar").getAttribute("aria-valuenow"),
+          ),
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0);
   } finally {
     await app.close();
     await rm(userData, { recursive: true, force: true });
@@ -99,7 +142,7 @@ test("launches the secure onboarding flow", async () => {
 
 test("shows permission recovery when camera access is denied", async () => {
   const userData = await mkdtemp(join(tmpdir(), "posture-e2e-denied-"));
-  const app = await launch(userData, { POSTURE_TEST_CAMERA_STATUS: "denied" });
+  const app = await launch(userData, { UPRIGHT_TEST_CAMERA_STATUS: "denied" });
 
   try {
     const window = await app.firstWindow();
@@ -148,6 +191,43 @@ test("recovers from a stale saved camera identifier", async () => {
     await expect(window.locator("select")).not.toHaveValue(
       "camera-that-no-longer-exists",
     );
+  } finally {
+    await app.close();
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test("preserves legacy profile settings while presenting Upright branding", async () => {
+  const userData = await mkdtemp(join(tmpdir(), "posture-e2e-upgrade-"));
+  await writeFile(
+    join(userData, "settings.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      selectedCameraId: null,
+      sensitivity: "high",
+      reminderDelaySeconds: 60,
+      cooldownMinutes: 20,
+      soundEnabled: true,
+      launchAtLogin: false,
+      autoStartTracking: false,
+      reduceOnBattery: true,
+      theme: "dark",
+      onboardingComplete: true,
+      diagnosticsEnabled: false,
+    }),
+  );
+  const app = await launch(userData);
+
+  try {
+    const window = await app.firstWindow();
+    await expect(
+      window.getByRole("heading", { name: "Stay comfortable, not perfect." }),
+    ).toBeVisible();
+    await expect(window.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect(window).toHaveTitle("Upright");
+    await expect(
+      window.getByText("This camera needs calibration"),
+    ).toBeVisible();
   } finally {
     await app.close();
     await rm(userData, { recursive: true, force: true });

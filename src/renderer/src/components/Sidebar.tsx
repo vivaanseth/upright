@@ -1,11 +1,25 @@
-import { Pulse, Camera, Gear, PersonSimple } from "@phosphor-icons/react";
+import {
+  Pulse,
+  Camera,
+  ClockCounterClockwise,
+  Gear,
+  PersonSimple,
+} from "@phosphor-icons/react";
 import type { View } from "../store";
 
 const items: Array<{ view: View; label: string; icon: typeof Pulse }> = [
   { view: "dashboard", label: "Today", icon: Pulse },
+  { view: "history", label: "History", icon: ClockCounterClockwise },
   { view: "diagnostics", label: "Camera", icon: Camera },
   { view: "settings", label: "Settings", icon: Gear },
 ];
+
+const headingIds: Record<View, string> = {
+  dashboard: "dashboard-title",
+  history: "history-title",
+  diagnostics: "camera-title",
+  settings: "settings-title",
+};
 
 export function Sidebar({
   view,
@@ -20,7 +34,7 @@ export function Sidebar({
         <span className="brand-mark">
           <PersonSimple size={22} weight="bold" />
         </span>
-        <span>Posture</span>
+        <span>Upright</span>
       </div>
       <nav aria-label="Main navigation">
         {items.map((item) => {
@@ -29,8 +43,20 @@ export function Sidebar({
             <button
               key={item.view}
               className={`nav-item ${view === item.view ? "active" : ""}`}
-              onClick={() => onChange(item.view)}
+              onClick={() => {
+                onChange(item.view);
+                window.requestAnimationFrame(() => {
+                  const heading = document.getElementById(
+                    headingIds[item.view],
+                  );
+                  if (!heading) return;
+                  if (!heading.hasAttribute("tabindex")) heading.tabIndex = -1;
+                  heading.focus();
+                });
+              }}
               aria-current={view === item.view ? "page" : undefined}
+              aria-label={item.label}
+              data-tooltip={item.label}
             >
               <Icon
                 size={19}
@@ -55,7 +81,7 @@ export function Sidebar({
 function EyeLock(): React.JSX.Element {
   return (
     <span className="privacy-glyph" aria-hidden="true">
-      P
+      U
     </span>
   );
 }

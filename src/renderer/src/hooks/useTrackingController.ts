@@ -2,22 +2,28 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   Calibration,
   CameraAccessStatus,
+  CameraFailureCode,
+  CameraOwner,
   PostureFeatures,
   PowerState,
+  RuntimeDiagnostics,
   TrackingSnapshot,
   TrackingCommand,
   TrackingMode,
 } from "../../../shared/contracts";
 import {
   buildCalibration,
-  extractPostureFeatures,
+  extractPostureFeaturesDetailed,
+  isCalibrationCompatible,
   PostureClassifier,
 } from "../../../shared/posture-engine";
 import {
   POSE_WORKER_PROTOCOL_VERSION,
+  parsePoseWorkerResponse,
   type PoseWorkerRequest,
   type PoseWorkerResponse,
 } from "../../../shared/worker-protocol";
+import { AdaptiveSamplingController } from "../runtime/adaptive-sampling";
 import { useAppStore } from "../store";
 
 export interface CameraDevice {
@@ -44,8 +50,14 @@ const createDeferred = (): WorkerDeferred => {
 const wait = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
+const percentile = (values: number[], ratio: number): number | null => {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))];
+};
+
 const reportSnapshotToMain = (snapshot: TrackingSnapshot): void => {
-  window.posture.tracking.reportSnapshot({
+  window.upright.tracking.reportSnapshot({
     state: snapshot.state,
     score: snapshot.score,
     confidence: snapshot.confidence,
@@ -93,10 +105,22 @@ export function useTrackingController() {
   const [devices, setDevices] = useState<CameraDevice[]>([]);
   const [cameraAccessStatus, setCameraAccessStatus] =
     useState<CameraAccessStatus>("unknown");
+  const [cameraFailureCode, setCameraFailureCode] =
+    useState<CameraFailureCode | null>(null);
   const [workerReady, setWorkerReady] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [calibrationError, setCalibrationError] = useState<string | null>(null);
   const [calibrating, setCalibrating] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostics>({
+    targetFps: 5,
+    measuredFps: 0,
+    inferenceMedianMs: null,
+    inferenceP95Ms: null,
+    dropRate: 0,
+    workerRestarts: 0,
+    cameraOwner: "none",
+    featureReliability: null,
+  });
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -105,7 +129,12 @@ export function useTrackingController() {
   const workerDeferredRef = useRef<WorkerDeferred | null>(null);
   const workerReadyRef = useRef(false);
   const workerRestartCountRef = useRef(0);
+  const workerStableSinceRef = useRef<number | null>(null);
+  const restartInProgressRef = useRef<Promise<void> | null>(null);
+  const restartWorkerRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const requestIdRef = useRef(0);
+  const initializeRequestIdRef = useRef<number | null>(null);
+  const inFlightRequestIdRef = useRef<number | null>(null);
   const samplerTimerRef = useRef<number | null>(null);
   const watchdogTimerRef = useRef<number | null>(null);
   const frameBusyRef = useRef(false);
@@ -113,6 +142,12 @@ export function useTrackingController() {
   const droppedFrameTimesRef = useRef<number[]>([]);
   const resultTimesRef = useRef<number[]>([]);
   const latencyEwmaRef = useRef<number | null>(null);
+  const inferenceSamplesRef = useRef<Array<{ at: number; value: number }>>([]);
+  const adaptiveSamplingRef = useRef(
+    new AdaptiveSamplingController(performance.now()),
+  );
+  const cameraOwnerRef = useRef<CameraOwner>("none");
+  const muteTimerRef = useRef<number | null>(null);
   const classifierRef = useRef(new PostureClassifier());
   const calibrationSamplesRef = useRef<PostureFeatures[]>([]);
   const calibrationRejectedFramesRef = useRef(0);
@@ -131,6 +166,7 @@ export function useTrackingController() {
   const beginCalibrationRef = useRef<() => Promise<void>>(() =>
     Promise.resolve(),
   );
+  const cancelCalibrationRef = useRef<() => void>(() => undefined);
   const recoverCameraRef = useRef<
     (cameraId: string, mode: "tracking" | "calibrating") => Promise<void>
   >(() => Promise.resolve());
@@ -147,13 +183,12 @@ export function useTrackingController() {
     ) => {
       modeRef.current = mode;
       setTrackingMode(mode);
-      window.posture.tracking.reportRuntimeState({
+      window.upright.tracking.reportRuntimeState({
         schemaVersion: 1,
         mode,
         cameraId,
         calibrationId,
         errorCode,
-        updatedAt: Date.now(),
       });
     },
     [setTrackingMode],
@@ -185,34 +220,68 @@ export function useTrackingController() {
 
   const stopCameraTracks = useCallback(() => {
     stopSampler();
+    if (muteTimerRef.current !== null)
+      window.clearTimeout(muteTimerRef.current);
+    muteTimerRef.current = null;
     const current = streamRef.current;
     streamRef.current = null;
     current?.getTracks().forEach((track) => track.stop());
     setStream(null);
     if (videoRef.current) videoRef.current.srcObject = null;
     videoRef.current = null;
+    cameraOwnerRef.current = "none";
+    setDiagnostics((current) => ({ ...current, cameraOwner: "none" }));
   }, [stopSampler]);
 
-  const disposeWorker = useCallback(() => {
+  const disposeWorker = useCallback(async (): Promise<void> => {
     const worker = workerRef.current;
     if (!worker) return;
+    workerRef.current = null;
+    workerReadyRef.current = false;
+    workerDeferredRef.current = null;
+    inFlightRequestIdRef.current = null;
+    setWorkerReady(false);
+    clearWatchdog();
     const request: PoseWorkerRequest = {
       protocolVersion: POSE_WORKER_PROTOCOL_VERSION,
       requestId: ++requestIdRef.current,
       type: "dispose",
     };
-    worker.postMessage(request);
-    worker.terminate();
-    workerRef.current = null;
-    workerReadyRef.current = false;
-    workerDeferredRef.current = null;
-    setWorkerReady(false);
-    clearWatchdog();
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        worker.removeEventListener("message", onDisposed);
+        worker.terminate();
+        resolve();
+      };
+      const onDisposed = (event: MessageEvent<unknown>): void => {
+        try {
+          const response = parsePoseWorkerResponse(event.data);
+          if (
+            response.type === "disposed" &&
+            response.requestId === request.requestId
+          )
+            finish();
+        } catch {
+          // An invalid acknowledgement is ignored until the bounded timeout.
+        }
+      };
+      const timeout = window.setTimeout(finish, 750);
+      worker.addEventListener("message", onDisposed);
+      try {
+        worker.postMessage(request);
+      } catch {
+        finish();
+      }
+    });
   }, [clearWatchdog]);
 
   const stopCamera = useCallback(() => {
     stopCameraTracks();
-    disposeWorker();
+    void disposeWorker();
   }, [disposeWorker, stopCameraTracks]);
 
   const closePreview = useCallback(() => {
@@ -257,6 +326,7 @@ export function useTrackingController() {
   const handleWorkerResult = useCallback(
     (message: Extract<PoseWorkerResponse, { type: "result" }>) => {
       frameBusyRef.current = false;
+      inFlightRequestIdRef.current = null;
       clearWatchdog();
       frameFailureCountRef.current = 0;
       latencyEwmaRef.current =
@@ -264,9 +334,31 @@ export function useTrackingController() {
           ? message.inferenceMs
           : latencyEwmaRef.current * 0.8 + message.inferenceMs * 0.2;
       const sampledFps = measuredFps(message.timestamp);
-      const features = message.landmarks
-        ? extractPostureFeatures(message.landmarks)
-        : null;
+      const featureResult = message.landmarks
+        ? extractPostureFeaturesDetailed(message.landmarks)
+        : ({ ok: false, reason: "missing-head" } as const);
+      const features = featureResult.ok ? featureResult.features : null;
+      const now = performance.now();
+      workerStableSinceRef.current ??= now;
+      if (now - workerStableSinceRef.current >= 60_000)
+        workerRestartCountRef.current = 0;
+      inferenceSamplesRef.current.push({ at: now, value: message.inferenceMs });
+      inferenceSamplesRef.current = inferenceSamplesRef.current.filter(
+        (sample) => now - sample.at <= 10_000,
+      );
+      const latencyValues = inferenceSamplesRef.current.map(
+        (sample) => sample.value,
+      );
+      setDiagnostics({
+        targetFps: adaptiveSamplingRef.current.current,
+        measuredFps: sampledFps,
+        inferenceMedianMs: percentile(latencyValues, 0.5),
+        inferenceP95Ms: percentile(latencyValues, 0.95),
+        dropRate: rollingDropRate(now),
+        workerRestarts: workerRestartCountRef.current,
+        cameraOwner: cameraOwnerRef.current,
+        featureReliability: featureResult.ok ? featureResult.reliability : null,
+      });
 
       if (modeRef.current === "calibrating") {
         if (features) calibrationSamplesRef.current.push(features);
@@ -295,7 +387,7 @@ export function useTrackingController() {
         reportSnapshotToMain(snapshot);
       }
     },
-    [clearWatchdog, measuredFps, setSnapshot],
+    [clearWatchdog, measuredFps, rollingDropRate, setSnapshot],
   );
 
   const initializeWorker = useCallback(async (): Promise<void> => {
@@ -308,43 +400,69 @@ export function useTrackingController() {
       new URL("../workers/pose.worker.ts", import.meta.url),
     );
     workerRef.current = worker;
-    worker.addEventListener(
-      "message",
-      (event: MessageEvent<PoseWorkerResponse>) => {
-        const message = event.data;
-        if (message.protocolVersion !== POSE_WORKER_PROTOCOL_VERSION) return;
-        if (message.type === "ready") {
-          workerReadyRef.current = true;
-          setWorkerReady(true);
-          workerDeferredRef.current?.resolve();
-          workerDeferredRef.current = null;
+    worker.addEventListener("message", (event: MessageEvent<unknown>) => {
+      let message: PoseWorkerResponse;
+      try {
+        message = parsePoseWorkerResponse(event.data);
+      } catch {
+        clearWatchdog();
+        initializeRequestIdRef.current = null;
+        inFlightRequestIdRef.current = null;
+        frameBusyRef.current = false;
+        setCameraError("The pose worker returned an invalid response.");
+        void restartWorkerRef.current();
+        return;
+      }
+      if (message.type === "ready") {
+        if (message.requestId !== initializeRequestIdRef.current) return;
+        initializeRequestIdRef.current = null;
+        workerReadyRef.current = true;
+        setWorkerReady(true);
+        workerDeferredRef.current?.resolve();
+        workerDeferredRef.current = null;
+        return;
+      }
+      if (message.type === "fatal-error") {
+        if (
+          message.requestId !== initializeRequestIdRef.current &&
+          message.requestId !== inFlightRequestIdRef.current
+        )
           return;
+        initializeRequestIdRef.current = null;
+        inFlightRequestIdRef.current = null;
+        frameBusyRef.current = false;
+        workerDeferredRef.current?.reject(new Error(message.message));
+        workerDeferredRef.current = null;
+        workerReadyRef.current = false;
+        if (workerRef.current === worker) workerRef.current = null;
+        worker.terminate();
+        setWorkerReady(false);
+        setCameraError(message.message);
+        return;
+      }
+      if (message.type === "recoverable-error") {
+        if (message.requestId !== inFlightRequestIdRef.current) return;
+        inFlightRequestIdRef.current = null;
+        frameBusyRef.current = false;
+        clearWatchdog();
+        frameFailureCountRef.current += 1;
+        if (frameFailureCountRef.current >= 3) {
+          setCameraError(
+            "Pose inference stopped responding. Upright will restart it.",
+          );
+          void restartWorkerRef.current();
         }
-        if (message.type === "fatal-error") {
-          frameBusyRef.current = false;
-          workerDeferredRef.current?.reject(new Error(message.message));
-          workerDeferredRef.current = null;
-          workerReadyRef.current = false;
-          if (workerRef.current === worker) workerRef.current = null;
-          worker.terminate();
-          setWorkerReady(false);
-          setCameraError(message.message);
-          return;
-        }
-        if (message.type === "recoverable-error") {
-          frameBusyRef.current = false;
-          clearWatchdog();
-          frameFailureCountRef.current += 1;
-          if (frameFailureCountRef.current >= 3)
-            setCameraError(
-              "Pose inference stopped responding. Posture will restart it.",
-            );
-          return;
-        }
-        if (message.type === "result") handleWorkerResult(message);
-      },
-    );
+        return;
+      }
+      if (message.type === "result") {
+        if (message.requestId !== inFlightRequestIdRef.current) return;
+        handleWorkerResult(message);
+      }
+    });
     worker.addEventListener("error", (event) => {
+      clearWatchdog();
+      initializeRequestIdRef.current = null;
+      inFlightRequestIdRef.current = null;
       frameBusyRef.current = false;
       workerReadyRef.current = false;
       if (workerRef.current === worker) workerRef.current = null;
@@ -354,61 +472,85 @@ export function useTrackingController() {
       workerDeferredRef.current?.reject(error);
       workerDeferredRef.current = null;
       setCameraError(error.message);
+      if (modeRef.current === "tracking" || modeRef.current === "calibrating")
+        void restartWorkerRef.current();
     });
 
+    const requestId = ++requestIdRef.current;
+    initializeRequestIdRef.current = requestId;
+    workerStableSinceRef.current = null;
     const request: PoseWorkerRequest = {
       protocolVersion: POSE_WORKER_PROTOCOL_VERSION,
-      requestId: ++requestIdRef.current,
+      requestId,
       type: "initialize",
+      ...(__UPRIGHT_E2E_FIXTURE__ &&
+      new URLSearchParams(window.location.search).get("fixture") ===
+        "deterministic"
+        ? { fixture: "deterministic" as const }
+        : {}),
     };
     worker.postMessage(request);
     return deferred.promise;
   }, [clearWatchdog, handleWorkerResult, setCameraError]);
 
-  const targetFps = useCallback((): number => {
-    if (
-      (settings.reduceOnBattery && powerStateRef.current.onBattery) ||
-      (latencyEwmaRef.current ?? 0) > 150 ||
-      rollingDropRate(performance.now()) > 0.2
-    )
-      return 3;
-    const oldestResult = resultTimesRef.current[0];
-    const hasTenSecondsOfHeadroom =
-      oldestResult !== undefined && performance.now() - oldestResult >= 10_000;
-    if (
-      !powerStateRef.current.onBattery &&
-      resultTimesRef.current.length >= 20 &&
-      hasTenSecondsOfHeadroom &&
-      (latencyEwmaRef.current ?? Number.POSITIVE_INFINITY) < 80 &&
-      rollingDropRate(performance.now()) < 0.05
-    )
-      return 8;
-    return 5;
+  const targetFps = useCallback((): 3 | 5 | 8 => {
+    const now = performance.now();
+    return adaptiveSamplingRef.current.next(
+      {
+        onBattery: powerStateRef.current.onBattery,
+        reduceOnBattery: settings.reduceOnBattery,
+        latencyEwmaMs: latencyEwmaRef.current,
+        dropRate: rollingDropRate(now),
+      },
+      now,
+    );
   }, [rollingDropRate, settings.reduceOnBattery]);
 
   const restartWorker = useCallback(async () => {
-    if (workerRestartCountRef.current >= 3) {
-      reportMode("error", undefined, undefined, "worker-restart-limit");
-      setCameraError(
-        "Pose tracking could not recover. Pause tracking, then try again.",
-      );
-      stopSampler();
-      return;
-    }
-    workerRestartCountRef.current += 1;
-    disposeWorker();
-    try {
-      await initializeWorker();
-    } catch {
-      return;
-    }
+    if (restartInProgressRef.current) return restartInProgressRef.current;
+    const restart = async (): Promise<void> => {
+      if (workerRestartCountRef.current >= 3) {
+        reportMode("error", undefined, undefined, "worker-restart-limit");
+        setCameraError(
+          "Pose tracking could not recover. Pause tracking, then try again.",
+        );
+        stopSampler();
+        return;
+      }
+      workerRestartCountRef.current += 1;
+      workerStableSinceRef.current = null;
+      setDiagnostics((current) => ({
+        ...current,
+        workerRestarts: workerRestartCountRef.current,
+      }));
+      clearWatchdog();
+      inFlightRequestIdRef.current = null;
+      frameBusyRef.current = false;
+      await disposeWorker();
+      try {
+        await initializeWorker();
+      } catch {
+        return;
+      }
+    };
+    const pending = restart().finally(() => {
+      if (restartInProgressRef.current === pending)
+        restartInProgressRef.current = null;
+    });
+    restartInProgressRef.current = pending;
+    return pending;
   }, [
+    clearWatchdog,
     disposeWorker,
     initializeWorker,
     reportMode,
     setCameraError,
     stopSampler,
   ]);
+
+  useEffect(() => {
+    restartWorkerRef.current = restartWorker;
+  }, [restartWorker]);
 
   const sampleFrameRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const scheduleSample = useCallback(() => {
@@ -423,6 +565,8 @@ export function useTrackingController() {
   }, [targetFps]);
 
   const sampleFrame = useCallback(async () => {
+    let bitmap: ImageBitmap | null = null;
+    let transferred = false;
     try {
       if (
         !workerReadyRef.current ||
@@ -436,7 +580,6 @@ export function useTrackingController() {
       }
       frameBusyRef.current = true;
       const video = videoRef.current;
-      let bitmap: ImageBitmap;
       if (navigator.userAgent.includes("Linux")) {
         const canvas = frameCanvasRef.current ?? new OffscreenCanvas(640, 480);
         frameCanvasRef.current = canvas;
@@ -452,7 +595,6 @@ export function useTrackingController() {
       }
       const worker = workerRef.current;
       if (!worker) {
-        bitmap.close();
         frameBusyRef.current = false;
         return;
       }
@@ -465,6 +607,8 @@ export function useTrackingController() {
         timestamp: performance.now(),
       };
       worker.postMessage(request, [bitmap]);
+      transferred = true;
+      inFlightRequestIdRef.current = requestId;
       clearWatchdog();
       watchdogTimerRef.current = window.setTimeout(() => {
         frameBusyRef.current = false;
@@ -480,6 +624,7 @@ export function useTrackingController() {
           }`,
         );
     } finally {
+      if (bitmap && !transferred) bitmap.close();
       scheduleSample();
     }
   }, [clearWatchdog, restartWorker, scheduleSample, setCameraError]);
@@ -492,6 +637,9 @@ export function useTrackingController() {
     stopSampler();
     droppedFrameTimesRef.current = [];
     resultTimesRef.current = [];
+    inferenceSamplesRef.current = [];
+    latencyEwmaRef.current = null;
+    adaptiveSamplingRef.current.reset(performance.now());
     scheduleSample();
   }, [scheduleSample, stopSampler]);
 
@@ -502,8 +650,13 @@ export function useTrackingController() {
       if (!track || !cameraId) return;
       track.addEventListener("ended", () => {
         if (streamRef.current !== media) return;
-        if (modeRef.current === "tracking" || modeRef.current === "calibrating")
-          void recoverCameraRef.current(cameraId, modeRef.current);
+        if (modeRef.current === "calibrating") {
+          cancelCalibrationRef.current();
+          setCameraError(
+            "Calibration was cancelled because the camera disconnected.",
+          );
+        } else if (modeRef.current === "tracking")
+          void recoverCameraRef.current(cameraId, "tracking");
         else {
           reportMode("error", cameraId, null, "camera-disconnected");
           setCameraError("The selected camera was disconnected.");
@@ -512,17 +665,36 @@ export function useTrackingController() {
       });
       track.addEventListener("mute", () => {
         if (streamRef.current !== media) return;
-        if (modeRef.current === "tracking")
+        if (modeRef.current === "calibrating") {
+          cancelCalibrationRef.current();
+          setCameraError(
+            "Calibration was cancelled because the camera signal stopped.",
+          );
+          return;
+        }
+        if (modeRef.current === "tracking") {
+          stopSampler();
           reportMode(
             "recovering",
             cameraId,
             activeCalibrationRef.current?.id ?? null,
             "camera-muted",
           );
+          if (muteTimerRef.current !== null)
+            window.clearTimeout(muteTimerRef.current);
+          muteTimerRef.current = window.setTimeout(() => {
+            muteTimerRef.current = null;
+            if (streamRef.current === media && modeRef.current === "recovering")
+              void recoverCameraRef.current(cameraId, "tracking");
+          }, 1_500);
+        }
       });
       track.addEventListener("unmute", () => {
         if (streamRef.current !== media || modeRef.current !== "recovering")
           return;
+        if (muteTimerRef.current !== null)
+          window.clearTimeout(muteTimerRef.current);
+        muteTimerRef.current = null;
         reportMode(
           "tracking",
           cameraId,
@@ -531,35 +703,45 @@ export function useTrackingController() {
         startSampler();
       });
     },
-    [reportMode, setCameraError, startSampler, stopCameraTracks],
+    [reportMode, setCameraError, startSampler, stopCameraTracks, stopSampler],
   );
 
   const openCamera = useCallback(
     async (
       cameraId?: string | null,
-      allowFallback = true,
+      allowFallback = false,
       desiredMode: "preview" | "tracking" | "calibrating" = "preview",
       recovering = false,
+      previewOwner: Extract<
+        CameraOwner,
+        "onboarding-preview" | "diagnostics-preview"
+      > = useAppStore.getState().settings.onboardingComplete
+        ? "diagnostics-preview"
+        : "onboarding-preview",
     ) => {
       stopCameraTracks();
       setCameraError(null);
+      setCameraFailureCode(null);
       if (!recovering)
         reportMode("requesting-permission", cameraId ?? null, null);
       let media: MediaStream | null = null;
       let workerInitialized = false;
+      let failureOverride: CameraFailureCode | null = null;
+      let requestedAccessStatus: CameraAccessStatus = "unknown";
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
           throw new DOMException(
-            "This system does not expose camera access to Posture.",
+            "This system does not expose camera access to Upright.",
             "NotSupportedError",
           );
         }
-        const accessStatus = await window.posture.camera.requestAccess();
+        const accessStatus = await window.upright.camera.requestAccess();
+        requestedAccessStatus = accessStatus;
         setCameraAccessStatus(accessStatus);
         if (accessStatus !== "granted") {
           const message =
             accessStatus === "denied" || accessStatus === "restricted"
-              ? "Camera access is off. Allow Posture in your system privacy settings, then try again."
+              ? "Camera access is off. Allow Upright in your system privacy settings, then try again."
               : "Camera access was not granted. Allow camera access to continue.";
           throw new DOMException(message, "NotAllowedError");
         }
@@ -579,7 +761,10 @@ export function useTrackingController() {
         ]);
         if (mediaResult.status === "fulfilled") media = mediaResult.value;
         if (workerResult.status === "fulfilled") workerInitialized = true;
-        if (workerResult.status === "rejected") throw workerResult.reason;
+        if (workerResult.status === "rejected") {
+          failureOverride = "worker-init-failed";
+          throw workerResult.reason;
+        }
         if (mediaResult.status === "rejected") throw mediaResult.reason;
         const openedMedia = media;
         if (!openedMedia)
@@ -593,7 +778,25 @@ export function useTrackingController() {
         video.muted = true;
         video.playsInline = true;
         video.srcObject = openedMedia;
+        failureOverride = "playback-failed";
         await video.play();
+        failureOverride = null;
+        const activeTrackSettings = openedMedia
+          .getVideoTracks()[0]
+          ?.getSettings();
+        if (
+          desiredMode === "tracking" &&
+          activeCalibrationRef.current &&
+          !isCalibrationCompatible(activeCalibrationRef.current, {
+            width: activeTrackSettings?.width ?? 640,
+            height: activeTrackSettings?.height ?? 480,
+          })
+        ) {
+          throw new DOMException(
+            "This camera framing changed. Recalibrate before tracking.",
+            "InvalidStateError",
+          );
+        }
         videoRef.current = video;
         streamRef.current = openedMedia;
         setStream(openedMedia);
@@ -609,6 +812,17 @@ export function useTrackingController() {
         )
           await updateSettings({ selectedCameraId: activeId });
         setCameraAccessStatus("granted");
+        setCameraFailureCode(null);
+        cameraOwnerRef.current =
+          desiredMode === "tracking"
+            ? "tracking"
+            : desiredMode === "calibrating"
+              ? "calibration"
+              : previewOwner;
+        setDiagnostics((current) => ({
+          ...current,
+          cameraOwner: cameraOwnerRef.current,
+        }));
         reportMode(
           desiredMode,
           activeId,
@@ -616,6 +830,8 @@ export function useTrackingController() {
             ? (activeCalibrationRef.current?.id ?? null)
             : null,
         );
+        if (desiredMode === "calibrating")
+          calibrationStartedRef.current = performance.now();
         if (desiredMode === "tracking" || desiredMode === "calibrating")
           startSampler();
         return activeId;
@@ -625,7 +841,7 @@ export function useTrackingController() {
           videoRef.current.srcObject = null;
         if (streamRef.current === media) streamRef.current = null;
         setStream((current) => (current === media ? null : current));
-        if (workerInitialized) disposeWorker();
+        if (workerInitialized) await disposeWorker();
         stopSampler();
         if (
           allowFallback &&
@@ -635,25 +851,45 @@ export function useTrackingController() {
             error.name === "NotFoundError")
         ) {
           await updateSettings({ selectedCameraId: null });
-          return openCamera(null, false, desiredMode, recovering);
+          return openCamera(null, false, desiredMode, recovering, previewOwner);
         }
         if (error instanceof DOMException && error.name === "NotAllowedError")
-          setCameraAccessStatus("denied");
+          setCameraAccessStatus(
+            requestedAccessStatus === "restricted" ? "restricted" : "denied",
+          );
         const message =
           error instanceof DOMException && error.name === "NotAllowedError"
-            ? "Camera access is off. Allow Posture in your system privacy settings, then try again."
+            ? "Camera access is off. Allow Upright in your system privacy settings, then try again."
             : error instanceof DOMException && error.name === "NotReadableError"
               ? "The camera is already in use by another application."
               : error instanceof DOMException && error.name === "NotFoundError"
                 ? "No camera was found. Connect a camera and try again."
-                : "Posture could not open this camera. Check the connection and try again.";
+                : error instanceof DOMException &&
+                    error.name === "InvalidStateError"
+                  ? error.message
+                  : "Upright could not open this camera. Check the connection and try again.";
+        const failureCode: CameraFailureCode =
+          failureOverride ??
+          (error instanceof DOMException && error.name === "NotAllowedError"
+            ? requestedAccessStatus === "restricted"
+              ? "permission-restricted"
+              : "permission-denied"
+            : error instanceof DOMException && error.name === "NotReadableError"
+              ? "device-busy"
+              : error instanceof DOMException && error.name === "NotFoundError"
+                ? "no-device"
+                : error instanceof DOMException &&
+                    error.name === "NotSupportedError"
+                  ? "unsupported"
+                  : "unknown");
+        setCameraFailureCode(failureCode);
         setCameraError(message);
         if (!recovering)
           reportMode(
             "error",
             cameraId ?? null,
             activeCalibrationRef.current?.id ?? null,
-            error instanceof DOMException ? error.name : "camera-open-failed",
+            failureCode,
           );
         throw error;
       }
@@ -729,10 +965,38 @@ export function useTrackingController() {
       await openCamera(calibration.cameraId, false, "tracking");
       return;
     }
+    const activeSettings = streamRef.current.getVideoTracks()[0]?.getSettings();
+    if (
+      !isCalibrationCompatible(calibration, {
+        width: activeSettings?.width ?? 640,
+        height: activeSettings?.height ?? 480,
+      })
+    ) {
+      setCalibrationError(
+        "Camera orientation or framing changed. Recalibrate before tracking.",
+      );
+      reportMode(
+        "error",
+        calibration.cameraId,
+        calibration.id,
+        "calibration-incompatible",
+      );
+      stopCamera();
+      return;
+    }
     await initializeWorker();
+    cameraOwnerRef.current = "tracking";
+    setDiagnostics((current) => ({ ...current, cameraOwner: "tracking" }));
     reportMode("tracking", calibration.cameraId, calibration.id);
     startSampler();
-  }, [calibrations, initializeWorker, openCamera, reportMode, startSampler]);
+  }, [
+    calibrations,
+    initializeWorker,
+    openCamera,
+    reportMode,
+    startSampler,
+    stopCamera,
+  ]);
 
   const pauseTracking = useCallback(() => {
     reportMode("paused", null, activeCalibrationRef.current?.id ?? null);
@@ -756,29 +1020,38 @@ export function useTrackingController() {
     stopCamera();
   }, [reportMode, stopCamera, stopSampler]);
 
+  useEffect(() => {
+    cancelCalibrationRef.current = cancelCalibration;
+  }, [cancelCalibration]);
+
   const beginCalibration = useCallback(async () => {
     setCalibrationError(null);
     setCalibrationProgress(0);
     workerRestartCountRef.current = 0;
     calibrationSamplesRef.current = [];
     calibrationRejectedFramesRef.current = 0;
-    calibrationStartedRef.current = performance.now();
     setCalibrating(true);
     try {
       if (!streamRef.current?.active) {
         const cameraId = await openCamera(
           useAppStore.getState().settings.selectedCameraId,
-          true,
+          false,
           "calibrating",
         );
         if (!cameraId) throw new Error("No camera was found.");
       } else {
         await initializeWorker();
+        cameraOwnerRef.current = "calibration";
+        setDiagnostics((current) => ({
+          ...current,
+          cameraOwner: "calibration",
+        }));
         reportMode(
           "calibrating",
           streamRef.current.getVideoTracks()[0]?.getSettings().deviceId ?? null,
           null,
         );
+        calibrationStartedRef.current = performance.now();
         startSampler();
       }
     } catch (error) {
@@ -811,10 +1084,18 @@ export function useTrackingController() {
           rejectedFrameCount: calibrationRejectedFramesRef.current,
         },
       );
-      const next = await window.posture.calibrations.save(calibration);
+      const next = await window.upright.calibrations.save(calibration);
       setCalibrations(next);
       activeCalibrationRef.current = calibration;
       setCalibrationProgress(100);
+      cameraOwnerRef.current = useAppStore.getState().settings
+        .onboardingComplete
+        ? "diagnostics-preview"
+        : "onboarding-preview";
+      setDiagnostics((current) => ({
+        ...current,
+        cameraOwner: cameraOwnerRef.current,
+      }));
       reportMode("preview", cameraId, calibration.id);
     } catch (error) {
       setCalibrationError(
@@ -839,7 +1120,7 @@ export function useTrackingController() {
     async (cameraId: string) => {
       await updateSettings({ selectedCameraId: cameraId });
       activeCalibrationRef.current = null;
-      if (streamRef.current?.active) await openCamera(cameraId);
+      if (streamRef.current?.active) await openCamera(cameraId, false);
     },
     [openCamera, updateSettings],
   );
@@ -853,13 +1134,13 @@ export function useTrackingController() {
   useEffect(() => {
     let disposed = false;
     reportMode("stopped", null, null);
-    void window.posture.app.getPowerState().then((state) => {
+    void window.upright.app.getPowerState().then((state) => {
       if (!disposed) powerStateRef.current = state;
     });
-    const unsubscribePower = window.posture.app.onPowerStateChanged((state) => {
+    const unsubscribePower = window.upright.app.onPowerStateChanged((state) => {
       powerStateRef.current = state;
     });
-    const unsubscribeCommand = window.posture.tracking.onCommand(
+    const unsubscribeCommand = window.upright.tracking.onCommand(
       (command: TrackingCommand) => {
         if (command.type === "start" || command.type === "resume")
           void startTrackingRef.current().catch(() => undefined);
@@ -883,7 +1164,36 @@ export function useTrackingController() {
       },
     );
     const onDeviceChange = (): void => {
-      void refreshDevices(streamRef.current);
+      void (async () => {
+        const current = streamRef.current;
+        const all = await navigator.mediaDevices.enumerateDevices();
+        setDevices(normalizeCameraDevices(all, current));
+        if (!current) return;
+        const cameraId = current.getVideoTracks()[0]?.getSettings().deviceId;
+        if (
+          !cameraId ||
+          all.some(
+            (device) =>
+              device.kind === "videoinput" && device.deviceId === cameraId,
+          )
+        )
+          return;
+        setCameraFailureCode("device-disconnected");
+        if (modeRef.current === "calibrating") {
+          cancelCalibrationRef.current();
+          setCameraError(
+            "Calibration was cancelled because the camera disconnected.",
+          );
+        } else if (modeRef.current === "tracking") {
+          await recoverCameraRef.current(cameraId, "tracking");
+        } else {
+          reportMode("error", cameraId, null, "device-disconnected");
+          setCameraError("The selected camera was disconnected.");
+          stopCameraTracks();
+        }
+      })().catch(() => {
+        setCameraError("Upright could not refresh the camera list.");
+      });
     };
     navigator.mediaDevices?.addEventListener("devicechange", onDeviceChange);
     const onVisibilityChange = (): void => {
@@ -905,18 +1215,19 @@ export function useTrackingController() {
   }, [
     cancelCalibration,
     closePreview,
-    refreshDevices,
     reportMode,
+    setCameraError,
     setView,
     stopCamera,
+    stopCameraTracks,
   ]);
 
   const openSystemPrivacySettings = useCallback(async () => {
     try {
-      await window.posture.camera.openSystemPrivacySettings();
+      await window.upright.camera.openSystemPrivacySettings();
     } catch {
       setCameraError(
-        "Posture could not open camera settings. Open your system privacy settings manually.",
+        "Upright could not open camera settings. Open your system privacy settings manually.",
       );
     }
   }, [setCameraError]);
@@ -925,10 +1236,12 @@ export function useTrackingController() {
     stream,
     devices,
     cameraAccessStatus,
+    cameraFailureCode,
     workerReady,
     calibrating,
     calibrationProgress,
     calibrationError,
+    diagnostics,
     openCamera,
     stopCamera,
     closePreview,

@@ -1,11 +1,11 @@
 name: Feature request
-description: Suggest a focused improvement for Posture.
+description: Suggest a focused improvement for Upright.
 title: "[Feature]: "
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
-      value: Please keep requests aligned with Posture's local-only, non-medical scope.
+      value: Please keep requests aligned with Upright's local-only, non-medical scope.
   - type: textarea
     id: problem
     attributes:

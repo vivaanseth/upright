@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  POSTURE_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+  UPRIGHT_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
   VERSION: ${{ github.ref_name }}
 
 jobs:
@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify tag, package, and changelog versions
         shell: bash
@@ -34,6 +35,11 @@ jobs:
           fi
           if ! grep -Fq "## $version -" CHANGELOG.md; then
             echo "CHANGELOG.md has no $version release entry." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "Release tag must point to a commit reachable from main." >&2
             exit 1
           fi
 
@@ -81,6 +87,10 @@ jobs:
       - run: pnpm audit:prod
       - run: pnpm audit:licenses
       - run: pnpm build
+      - name: Build deterministic E2E fixture
+        env:
+          UPRIGHT_E2E_FIXTURE: "true"
+        run: pnpm exec electron-vite build
       - name: Electron E2E
         shell: bash
         run: |
@@ -89,15 +99,28 @@ jobs:
           else
             pnpm test:e2e
           fi
+      - name: Restore hardened production build
+        run: pnpm build
       - run: ${{ matrix.command }}
-      - run: pnpm verify:built-package dist
-      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
-        with:
-          path: dist
-          format: cyclonedx-json
-          output-file: dist/Posture-${{ github.ref_name }}-${{ matrix.name }}-sbom.cdx.json
-          upload-artifact: false
-          upload-release-assets: false
+      - name: Prepare Linux sandbox helper for packaged smoke
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root dist/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 dist/linux-unpacked/chrome-sandbox
+      - name: Verify and launch packaged application
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            xvfb-run --auto-servernum pnpm verify:built-package dist
+          else
+            pnpm verify:built-package dist
+          fi
+      - name: Generate and validate runtime SBOM
+        shell: bash
+        run: |
+          pnpm generate:sbom "${{ matrix.name }}" "dist/Upright-${VERSION}-${{ matrix.name }}-sbom.cdx.json"
+          pnpm verify:sbom "dist/Upright-${VERSION}-${{ matrix.name }}-sbom.cdx.json"
+          pnpm verify:notices "dist/Upright-${VERSION}-${{ matrix.name }}-sbom.cdx.json" --check
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: |
@@ -111,7 +134,7 @@ jobs:
             dist/*.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: posture-${{ matrix.name }}
+          name: upright-${{ matrix.name }}
           path: |
             dist/*.dmg
             dist/*.zip
@@ -134,36 +157,17 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: posture-*
+          pattern: upright-*
           path: release-assets
           merge-multiple: true
-      - name: Verify exact artifact manifest
-        shell: bash
-        working-directory: release-assets
-        run: |
-          version="${VERSION#v}"
-          expected=(
-            "Posture-${version}-mac-universal.dmg"
-            "Posture-${version}-mac-universal.zip"
-            "Posture-${version}-win-x64.exe"
-            "Posture-${version}-win-x64.zip"
-            "Posture-${version}-linux-x86_64.AppImage"
-            "Posture-${version}-linux-amd64.deb"
-            "Posture-${version}-linux-x86_64.rpm"
-            "Posture-${version}-linux-x64.tar.gz"
-            "Posture-${VERSION}-macos-sbom.cdx.json"
-            "Posture-${VERSION}-windows-sbom.cdx.json"
-            "Posture-${VERSION}-linux-sbom.cdx.json"
-          )
-          mapfile -t actual < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
-          mapfile -t wanted < <(printf '%s\n' "${expected[@]}" | sort)
-          diff -u <(printf '%s\n' "${wanted[@]}") <(printf '%s\n' "${actual[@]}")
       - name: Generate and verify checksums
         shell: bash
         working-directory: release-assets
         run: |
           find . -maxdepth 1 -type f ! -name SHASUMS256.txt -printf '%f\0' | sort -z | xargs -0 sha256sum > SHASUMS256.txt
           sha256sum --check SHASUMS256.txt
+      - name: Verify exact artifact manifest
+        run: node scripts/verify-release-assets.mjs release-assets "${VERSION#v}"
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -171,7 +175,7 @@ jobs:
         run: |
           version="${VERSION#v}"
           notes="docs/releases/v${version}.md"
-          args=(release create "$VERSION" release-assets/* --latest --title "Posture $VERSION")
+          args=(release create "$VERSION" release-assets/* --draft --title "Upright $VERSION")
           if [[ -f "$notes" ]]; then
             args+=(--notes-file "$notes")
           else

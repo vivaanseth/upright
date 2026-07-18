@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Posture.
+Thanks for helping improve Upright.
 
 ## Principles
 

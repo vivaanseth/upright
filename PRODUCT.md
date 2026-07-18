@@ -6,11 +6,11 @@ product
 
 ## Users
 
-People who spend long stretches at a desk and want a private, low-friction reminder to reset their posture. They use Posture while working, studying, designing, or gaming and need it to recede into the background after a brief calibration.
+People who spend long stretches at a desk and want a private, low-friction reminder to reset their posture. They use Upright while working, studying, designing, or gaming and need it to recede into the background after a brief calibration.
 
 ## Product Purpose
 
-Posture turns an ordinary webcam into a local-only posture signal. It compares the user's current upper-body landmarks with a personal baseline, gives calm feedback after sustained slouching, and summarizes the current session without uploading or retaining camera imagery.
+Upright turns an ordinary webcam into a local-only posture signal. It compares the user's current upper-body landmarks with a personal baseline, gives calm feedback after sustained slouching, and summarizes the current session without uploading or retaining camera imagery.
 
 Success means the app is trustworthy enough to leave running, clear enough to calibrate without instruction, quiet enough not to interrupt concentration, and reliable across macOS, Windows, and mainstream Linux desktops.
 

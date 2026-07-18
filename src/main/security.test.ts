@@ -88,13 +88,13 @@ describe("media permission scope", () => {
 describe("trusted external URL validation", () => {
   it("accepts only HTTPS documentation and GitHub release destinations", () => {
     expect(
-      validateTrustedExternalUrl("https://github.com/vivaanseth/Posture/"),
-    ).toBe("https://github.com/vivaanseth/Posture");
+      validateTrustedExternalUrl("https://github.com/vivaanseth/upright/"),
+    ).toBe("https://github.com/vivaanseth/upright");
     expect(() =>
-      validateTrustedExternalUrl("http://github.com/vivaanseth/Posture"),
+      validateTrustedExternalUrl("http://github.com/vivaanseth/upright"),
     ).toThrow(/untrusted/i);
     expect(() =>
-      validateTrustedExternalUrl("https://github.com.evil.test/Posture"),
+      validateTrustedExternalUrl("https://github.com.evil.test/upright"),
     ).toThrow(/untrusted/i);
     expect(() =>
       validateTrustedExternalUrl("https://user:pass@github.com/repo"),

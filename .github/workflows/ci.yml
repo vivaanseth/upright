@@ -35,6 +35,10 @@ jobs:
       - run: pnpm test
       - run: pnpm test:coverage
       - run: pnpm build
+      - name: Build deterministic E2E fixture
+        env:
+          UPRIGHT_E2E_FIXTURE: "true"
+        run: pnpm exec electron-vite build
       - name: Electron E2E
         shell: bash
         run: |
@@ -62,8 +66,18 @@ jobs:
       - run: pnpm audit:prod
       - run: pnpm audit:licenses
       - run: pnpm build
+      - name: Validate runtime SBOM and notices
+        run: |
+          pnpm generate:sbom linux /tmp/upright-runtime-sbom.cdx.json
+          pnpm verify:sbom /tmp/upright-runtime-sbom.cdx.json
+          pnpm verify:notices /tmp/upright-runtime-sbom.cdx.json --check
       - run: pnpm package
-      - run: pnpm verify:built-package dist
+      - name: Prepare Linux sandbox helper for packaged smoke
+        run: |
+          sudo chown root:root dist/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 dist/linux-unpacked/chrome-sandbox
+      - name: Verify and launch packaged application
+        run: xvfb-run --auto-servernum pnpm verify:built-package dist
 
   dependency-review:
     if: github.event_name == 'pull_request'

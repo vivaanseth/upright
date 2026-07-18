@@ -58,7 +58,8 @@ async function inferExecutableFromAsar(asar) {
     if (!entry.isFile()) continue;
     if (
       entry.name.endsWith(".exe") ||
-      entry.name === "Posture" ||
+      entry.name === "Upright" ||
+      entry.name === "upright" ||
       entry.name === "posture-desktop"
     ) {
       return path.join(appRoot, entry.name);
@@ -96,6 +97,33 @@ async function verifyFuses(executable) {
   console.log(`Verified Electron fuses for ${executable}.`);
 }
 
+async function smokeTest(executable) {
+  const { stdout } = await execFileAsync(executable, ["--smoke-test"], {
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024,
+    env: {
+      ...process.env,
+      ELECTRON_ENABLE_LOGGING: "0",
+    },
+  });
+  const receiptLine = stdout
+    .split(/\r?\n/)
+    .find((line) => line.includes('"uprightSmoke":true'));
+  if (!receiptLine)
+    throw new Error(`No Upright smoke-test receipt from ${executable}.`);
+  const receipt = JSON.parse(receiptLine);
+  if (
+    receipt.rendererReady !== true ||
+    receipt.trayReady !== true ||
+    typeof receipt.version !== "string" ||
+    typeof receipt.architecture !== "string"
+  )
+    throw new Error(`Invalid Upright smoke-test receipt from ${executable}.`);
+  console.log(
+    `Smoke tested ${executable} (${receipt.platform}/${receipt.architecture}, v${receipt.version}).`,
+  );
+}
+
 const asars = await findAsarFiles(root);
 if (asars.length === 0) {
   throw new Error(`No app.asar files found under ${root}`);
@@ -112,6 +140,7 @@ for (const asar of asars) {
     throw new Error(`Could not infer Electron executable for ${asar}`);
   }
   await verifyFuses(executable);
+  await smokeTest(executable);
 }
 
 console.log(`Verified ${asars.length} packaged ASAR file(s).`);

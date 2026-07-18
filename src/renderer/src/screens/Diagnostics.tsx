@@ -6,7 +6,10 @@ import {
 } from "@phosphor-icons/react";
 import { CameraPreview } from "../components/CameraPreview";
 import type { CameraDevice } from "../hooks/useTrackingController";
-import type { TrackingSnapshot } from "../../../shared/contracts";
+import type {
+  RuntimeDiagnostics,
+  TrackingSnapshot,
+} from "../../../shared/contracts";
 
 export function Diagnostics({
   stream,
@@ -17,6 +20,8 @@ export function Diagnostics({
   progress,
   error,
   workerReady,
+  diagnosticsEnabled,
+  diagnostics,
   onSelectCamera,
   onOpenCamera,
   onCalibrate,
@@ -30,6 +35,8 @@ export function Diagnostics({
   progress: number;
   error: string | null;
   workerReady: boolean;
+  diagnosticsEnabled: boolean;
+  diagnostics: RuntimeDiagnostics;
   onSelectCamera: (id: string) => void;
   onOpenCamera: () => void;
   onCalibrate: () => void;
@@ -40,7 +47,9 @@ export function Diagnostics({
       <header className="screen-header">
         <div>
           <span className="context-label">Camera and calibration</span>
-          <h2 id="camera-title">Keep the signal reliable.</h2>
+          <h1 id="camera-title" tabIndex={-1}>
+            Keep the signal reliable.
+          </h1>
           <p>
             The preview is visible only here and during setup. It is never
             saved.
@@ -53,6 +62,9 @@ export function Diagnostics({
           <label className="field">
             <span>Camera</span>
             <select
+              aria-describedby={
+                error ? "camera-helper camera-error" : "camera-helper"
+              }
               value={selectedCameraId ?? ""}
               onChange={(event) => onSelectCamera(event.target.value)}
             >
@@ -65,7 +77,9 @@ export function Diagnostics({
                 </option>
               ))}
             </select>
-            <small>Changing cameras requires a new calibration.</small>
+            <small id="camera-helper">
+              Changing cameras requires a new calibration.
+            </small>
           </label>
           {!stream && (
             <button className="button button-secondary" onClick={onOpenCamera}>
@@ -107,31 +121,46 @@ export function Diagnostics({
             </div>
           )}
           {error && (
-            <p className="inline-error" role="alert">
+            <p id="camera-error" className="inline-error" role="alert">
               {error}
             </p>
           )}
-          <div className="diagnostic-readout">
-            <div>
-              <Gauge size={18} />
-              <span>Model</span>
-              <strong>{workerReady ? "Ready" : "Loading"}</strong>
+          {diagnosticsEnabled && (
+            <div className="diagnostic-readout">
+              <div>
+                <Gauge size={18} />
+                <span>Model</span>
+                <strong>{workerReady ? "Ready" : "Loading"}</strong>
+              </div>
+              <div>
+                <CheckCircle size={18} />
+                <span>Landmark confidence</span>
+                <strong>{Math.round(snapshot.confidence * 100)}%</strong>
+              </div>
+              <div>
+                <VideoCamera size={18} />
+                <span>Inference</span>
+                <strong>
+                  {snapshot.inferenceMs === null
+                    ? "Idle"
+                    : `${Math.round(snapshot.inferenceMs)} ms`}
+                </strong>
+              </div>
+              <div>
+                <Gauge size={18} />
+                <span>Sampling</span>
+                <strong>
+                  {diagnostics.measuredFps.toFixed(1)} / {diagnostics.targetFps}{" "}
+                  FPS
+                </strong>
+              </div>
+              <div>
+                <ArrowClockwise size={18} />
+                <span>Worker restarts</span>
+                <strong>{diagnostics.workerRestarts}</strong>
+              </div>
             </div>
-            <div>
-              <CheckCircle size={18} />
-              <span>Landmark confidence</span>
-              <strong>{Math.round(snapshot.confidence * 100)}%</strong>
-            </div>
-            <div>
-              <VideoCamera size={18} />
-              <span>Inference</span>
-              <strong>
-                {snapshot.inferenceMs === null
-                  ? "Idle"
-                  : `${Math.round(snapshot.inferenceMs)} ms`}
-              </strong>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </section>

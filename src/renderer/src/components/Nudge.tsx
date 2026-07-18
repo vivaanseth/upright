@@ -1,33 +1,19 @@
 import { ArrowRight, Pause, X } from "@phosphor-icons/react";
 import { useEffect } from "react";
+import { REMINDER_SOUND_DATA_URL } from "../reminder-sound";
 
 const safely = (operation: Promise<unknown>): void => {
   void operation.catch(() => undefined);
 };
 
 const enableInteraction = (): void => {
-  safely(window.posture.nudge.enableInteraction());
+  safely(window.uprightNudge.enableInteraction());
 };
 
 const playReminderSound = (): void => {
-  const AudioContextConstructor =
-    window.AudioContext ??
-    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
-  if (!AudioContextConstructor) return;
-  const context = new AudioContextConstructor();
-  const oscillator = context.createOscillator();
-  const gain = context.createGain();
-  oscillator.type = "sine";
-  oscillator.frequency.value = 587.33;
-  gain.gain.setValueAtTime(0.0001, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.035, context.currentTime + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.28);
-  oscillator.connect(gain);
-  gain.connect(context.destination);
-  oscillator.start();
-  oscillator.stop(context.currentTime + 0.3);
-  oscillator.addEventListener("ended", () => void context.close());
+  const audio = new Audio(REMINDER_SOUND_DATA_URL);
+  audio.volume = 0.45;
+  void audio.play().catch(() => undefined);
 };
 
 export function Nudge(): React.JSX.Element {
@@ -59,7 +45,7 @@ export function Nudge(): React.JSX.Element {
         <button
           className="icon-button"
           aria-label="Dismiss reminder"
-          onClick={() => safely(window.posture.nudge.dismiss())}
+          onClick={() => safely(window.uprightNudge.dismiss())}
         >
           <X size={16} weight="bold" />
         </button>
@@ -67,15 +53,15 @@ export function Nudge(): React.JSX.Element {
       <div className="nudge-actions">
         <button
           className="button button-secondary compact"
-          onClick={() => safely(window.posture.nudge.pauseForMinutes(10))}
+          onClick={() => safely(window.uprightNudge.pauseForMinutes(10))}
         >
           <Pause size={15} weight="bold" /> Pause 10 min
         </button>
         <button
           className="button button-primary compact"
-          onClick={() => safely(window.posture.window.openMain())}
+          onClick={() => safely(window.uprightNudge.openMain())}
         >
-          Open Posture <ArrowRight size={15} weight="bold" />
+          Open Upright <ArrowRight size={15} weight="bold" />
         </button>
       </div>
     </main>
