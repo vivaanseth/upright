@@ -102,6 +102,11 @@ jobs:
       - name: Restore hardened production build
         run: pnpm build
       - run: ${{ matrix.command }}
+      - name: Prepare Linux sandbox helper for packaged smoke
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root dist/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 dist/linux-unpacked/chrome-sandbox
       - name: Verify and launch packaged application
         shell: bash
         run: |
