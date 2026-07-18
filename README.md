@@ -1,8 +1,12 @@
-# Posture
+# Upright
 
-Posture is a private desktop companion that notices sustained posture changes with your webcam and offers a gentle reset. Pose estimation happens locally. Frames are processed in memory, then discarded.
+Upright is a private desktop companion that notices sustained posture changes with your webcam and offers a gentle reset. Pose estimation happens locally. Frames are processed in memory, then discarded.
 
-![Posture dashboard](docs/screenshots/dashboard.png)
+![Upright dashboard](docs/screenshots/dashboard.png)
+
+![Upright deterministic setup and tracking demo](docs/screenshots/upright-demo.gif)
+
+> **Beta:** Upright is under active cross-platform validation. See the recorded QA evidence before relying on a specific desktop environment or camera configuration.
 
 ## What it does
 
@@ -14,7 +18,7 @@ Posture is a private desktop companion that notices sustained posture changes wi
 - Continues from the macOS menu bar, Windows notification area, or Linux tray.
 - Supports system, light, and dark appearance.
 
-Posture is an ergonomic reminder, not a medical device. It does not diagnose, treat, or prevent any condition.
+Upright is an ergonomic reminder, not a medical device. It does not diagnose, treat, or prevent any condition.
 
 ## Privacy model
 
@@ -72,7 +76,7 @@ pnpm build
 pnpm test:e2e
 ```
 
-Unit tests cover calibration, scoring, hysteresis, Away behavior, session accounting, sleep-size time gaps, and reminder timing. The Electron end-to-end test launches the real app through its custom protocol and verifies the privacy onboarding flow.
+The automated suite currently includes 72 unit/component tests and five Electron end-to-end flows. The E2E suite covers deterministic onboarding and calibration, the real bundled MediaPipe worker with Chromium's fake camera, permission recovery, stale-camera fallback, legacy profile continuity, and Upright branding. Physical-camera and clean-installer evidence remains tracked separately rather than being inferred from automation.
 
 Release-readiness checks:
 
@@ -105,9 +109,11 @@ The release workflow builds each operating system on a native GitHub runner. Sta
 - Windows x64: NSIS installer and portable ZIP
 - Linux x64: AppImage, DEB, RPM, and tar.gz
 
-Initial artifacts are intentionally unsigned. macOS Gatekeeper and Windows SmartScreen may display warnings. Automatic updates remain disabled until Apple Developer ID and Windows Authenticode signing are configured.
+### Upgrading from Posture 0.5.4 <!-- brand-audit: allow-history -->
 
-If a camera does not appear during onboarding, follow the [camera troubleshooting guide](docs/troubleshooting-camera.md). Posture requests video only after the Privacy screen's Continue action and never requests microphone access.
+Upright deliberately keeps the existing application ID, `posture-desktop` data directory, and Linux package identity. Existing settings, calibrations, sessions, camera permission state, and Chromium data therefore remain available. On macOS, quit Posture before installing Upright, then remove the old `Posture.app` file after confirming the migration; the two filenames can otherwise coexist. <!-- brand-audit: allow-history -->
+
+If a camera does not appear during onboarding, follow the [camera troubleshooting guide](docs/troubleshooting-camera.md). Upright requests video only after the Privacy screen's Continue action and never requests microphone access.
 
 ## Compatibility and manual QA
 
@@ -126,4 +132,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development conventions and [SECURITY
 
 ## License
 
-Posture is available under the [MIT License](LICENSE). Model and dependency notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Upright is available under the [MIT License](LICENSE). Model and dependency notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

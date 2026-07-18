@@ -1,6 +1,6 @@
 # Release Process
 
-Posture releases are tag driven and start as draft prereleases.
+Upright releases are tag driven and start as drafts.
 
 ## Before tagging
 

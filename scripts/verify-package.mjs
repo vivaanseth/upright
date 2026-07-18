@@ -1,4 +1,4 @@
-import { listPackage } from "@electron/asar";
+import { extractFile, listPackage } from "@electron/asar";
 import { access, readdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -51,12 +51,42 @@ if (wasmEntries.length === 0 || uniqueWasmNames.size !== wasmEntries.length) {
 for (const required of [
   "/out/main/index.js",
   "/out/preload/index.js",
+  "/out/preload/nudge.js",
   "/out/renderer/index.html",
   "/package.json",
   "/LICENSE",
   "/THIRD_PARTY_NOTICES.md",
 ]) {
   if (!entries.includes(required)) failures.push(`missing ${required}`);
+}
+
+for (const preload of ["out/preload/index.js", "out/preload/nudge.js"]) {
+  const source = extractFile(archivePath, preload).toString("utf8");
+  const unsupportedRequires = [...source.matchAll(/require\(([^)]+)\)/g)]
+    .map((match) => match[1])
+    .filter((request) => request !== '"electron"' && request !== "'electron'");
+  if (unsupportedRequires.length)
+    failures.push(
+      `${preload} contains sandbox-incompatible external require calls: ${unsupportedRequires.join(", ")}`,
+    );
+}
+
+const rendererScripts = entries.filter(
+  (entry) => entry.startsWith("/out/renderer/assets/") && entry.endsWith(".js"),
+);
+for (const entry of rendererScripts) {
+  const source = extractFile(archivePath, entry.slice(1)).toString("utf8");
+  if (!entry.includes("pose.worker") && source.includes("deterministic"))
+    failures.push(
+      `production renderer exposes a deterministic test switch: ${entry}`,
+    );
+  if (
+    entry.includes("pose.worker") &&
+    /deterministicFixture\s*=\s*true/.test(source)
+  )
+    failures.push(
+      `production worker enables deterministic landmarks: ${entry}`,
+    );
 }
 
 const unpackedPath = `${archivePath}.unpacked`;

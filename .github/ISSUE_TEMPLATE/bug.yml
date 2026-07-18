@@ -9,7 +9,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Posture version
+      label: Upright version
     validations:
       required: true
   - type: dropdown

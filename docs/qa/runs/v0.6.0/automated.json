@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "app": "Upright",
+  "version": "0.6.0",
+  "date": "2026-07-18",
+  "host": {
+    "os": "macOS",
+    "version": "14.7.7",
+    "build": "23H723",
+    "architecture": "x86_64"
+  },
+  "tests": {
+    "vitestFiles": 10,
+    "vitestTests": 72,
+    "electronE2eFlows": 5,
+    "coveragePercent": {
+      "statements": 96.02,
+      "branches": 87.83,
+      "functions": 97.89,
+      "lines": 96.87
+    }
+  },
+  "sbom": {
+    "specVersion": "1.6",
+    "components": 9,
+    "relationships": 10
+  },
+  "package": {
+    "platform": "darwin",
+    "architecture": "x64",
+    "asarEntries": 24,
+    "wasmVariants": 3,
+    "models": 1,
+    "regularFiles": 41,
+    "unpackedApproximateMiB": 268,
+    "smokeTest": "passed"
+  },
+  "manualCompatibilityEstablished": false,
+  "performanceTargetsEstablished": false,
+  "controlledAccuracyEstablished": false,
+  "deepSecurityScanEstablished": false
+}

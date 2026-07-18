@@ -1,6 +1,6 @@
 # Performance QA
 
-Posture should remain quiet enough to leave running all day. These targets are evaluated with fake-camera automation first and then with real cameras on the compatibility matrix.
+Upright should remain quiet enough to leave running all day. These targets are evaluated with fake-camera automation first and then with real cameras on the compatibility matrix.
 
 ## Targets
 
@@ -29,4 +29,4 @@ Posture should remain quiet enough to leave running all day. These targets are e
 
 ## Current evidence
 
-`v0.1.2` local macOS package validation showed functional camera onboarding and inference, but the earlier summed-RSS memory method double-counted shared pages. Re-measure `v0.5.1` with private-memory methodology before promoting a release candidate.
+The 2026-07-18 Upright 0.6.0 x64 application bundle occupied approximately 268 MiB unpacked on macOS 14.7.7. This is a package observation, not a runtime performance result. Cold/warm launch, private memory, five-minute CPU, inference latency, drop rate, and thirty-minute growth remain unmeasured with the method above and therefore remain release-candidate blockers.

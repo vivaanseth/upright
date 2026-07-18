@@ -10,10 +10,11 @@ import {
   type TrackingSnapshot,
 } from "../../shared/contracts";
 
-export type View = "dashboard" | "settings" | "diagnostics";
+export type View = "dashboard" | "history" | "settings" | "diagnostics";
 
 interface AppStore {
   initialized: boolean;
+  initializationError: string | null;
   appInfo: AppInfo | null;
   settings: Settings;
   calibrations: CalibrationRecord[];
@@ -36,11 +37,14 @@ interface AppStore {
   initialize: () => Promise<void>;
   updateSettings: (patch: Partial<Settings>) => Promise<void>;
   completeOnboarding: () => Promise<void>;
-  refreshSessions: () => Promise<void>;
+  refreshCurrentSession: () => Promise<void>;
+  refreshRecentSessions: () => Promise<void>;
   deleteSessions: () => Promise<void>;
   deleteCalibration: (cameraId: string) => Promise<void>;
   resetAll: () => Promise<void>;
 }
+
+let currentSessionRefresh: Promise<void> | null = null;
 
 const initialSnapshot: TrackingSnapshot = {
   state: "paused",
@@ -53,8 +57,9 @@ const initialSnapshot: TrackingSnapshot = {
   message: "Camera access is paused.",
 };
 
-export const useAppStore = create<AppStore>((set, get) => ({
+export const useAppStore = create<AppStore>((set) => ({
   initialized: false,
+  initializationError: null,
   appInfo: null,
   settings: defaultSettings,
   calibrations: [],
@@ -76,49 +81,63 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setStorageRecovery: (storageRecovery) => set({ storageRecovery }),
   setView: (view) => set({ view }),
   initialize: async () => {
-    const [appInfo, settings, calibrations, recentSessions, recoveries] =
-      await Promise.all([
-        window.posture.app.getInfo(),
-        window.posture.settings.get(),
-        window.posture.calibrations.list(),
-        window.posture.sessions.getRecent(10),
-        window.posture.storage.getRecoveries(),
-      ]);
-    set({
-      initialized: true,
-      appInfo,
-      settings,
-      calibrations,
-      recentSessions,
-      storageRecovery: recoveries.at(-1) ?? null,
-    });
+    set({ initializationError: null });
+    try {
+      const [appInfo, settings, calibrations, recentSessions, recoveries] =
+        await Promise.all([
+          window.upright.app.getInfo(),
+          window.upright.settings.get(),
+          window.upright.calibrations.list(),
+          window.upright.sessions.getRecent(10),
+          window.upright.storage.getRecoveries(),
+        ]);
+      set({
+        initialized: true,
+        initializationError: null,
+        appInfo,
+        settings,
+        calibrations,
+        recentSessions,
+        storageRecovery: recoveries.at(-1) ?? null,
+      });
+    } catch (error) {
+      set({
+        initializationError:
+          error instanceof Error ? error.message : "Upright could not start.",
+      });
+    }
   },
   updateSettings: async (patch) =>
-    set({ settings: await window.posture.settings.update(patch) }),
+    set({ settings: await window.upright.settings.update(patch) }),
   completeOnboarding: async () => {
-    const settings = await window.posture.settings.update({
+    const settings = await window.upright.settings.update({
       onboardingComplete: true,
     });
     set({ settings, view: "dashboard" });
   },
-  refreshSessions: async () => {
-    const [session, recentSessions] = await Promise.all([
-      window.posture.sessions.getCurrent(),
-      window.posture.sessions.getRecent(10),
-    ]);
-    if (get().tracking || session) set({ session, recentSessions });
-    else set({ recentSessions });
+  refreshCurrentSession: () => {
+    if (currentSessionRefresh) return currentSessionRefresh;
+    const request = window.upright.sessions
+      .getCurrent()
+      .then((session) => set({ session }))
+      .finally(() => {
+        if (currentSessionRefresh === request) currentSessionRefresh = null;
+      });
+    currentSessionRefresh = request;
+    return request;
   },
+  refreshRecentSessions: async () =>
+    set({ recentSessions: await window.upright.sessions.getRecent(20) }),
   deleteSessions: async () => {
-    await window.posture.data.deleteSessions();
+    await window.upright.data.deleteSessions();
     set({ session: null, recentSessions: [] });
   },
   deleteCalibration: async (cameraId) =>
     set({
-      calibrations: await window.posture.calibrations.deleteForCamera(cameraId),
+      calibrations: await window.upright.calibrations.deleteForCamera(cameraId),
     }),
   resetAll: async () => {
-    await window.posture.data.resetAll();
+    await window.upright.data.resetAll();
     set({
       settings: defaultSettings,
       calibrations: [],
@@ -130,6 +149,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       trackingMode: "stopped",
       cameraError: null,
       storageRecovery: null,
+      initializationError: null,
     });
   },
 }));

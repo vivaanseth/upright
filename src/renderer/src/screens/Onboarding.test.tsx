@@ -14,6 +14,8 @@ const renderOnboarding = (
     progress: 0,
     calibrating: false,
     cameraAccessStatus: "unknown",
+    cameraFailureCode: null,
+    workerReady: false,
     canOpenCameraSettings: true,
     error: null,
     hasCalibration: false,
@@ -23,6 +25,7 @@ const renderOnboarding = (
     onSelectCamera: vi.fn(),
     onCalibrate: vi.fn(),
     onCancelCalibration: vi.fn(),
+    onTestReminder: vi.fn().mockResolvedValue(undefined),
     onComplete: vi.fn(),
     ...overrides,
   };

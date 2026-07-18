@@ -76,7 +76,7 @@ export function validateTrustedExternalUrl(input: string): string {
     url.username ||
     url.password
   ) {
-    throw new Error(`Untrusted external URL configured for Posture: ${input}`);
+    throw new Error(`Untrusted external URL configured for Upright: ${input}`);
   }
   return url.toString().replace(/\/$/, "");
 }

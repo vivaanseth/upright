@@ -266,7 +266,10 @@ describe("LocalStore", () => {
     expect((await readdir(root)).some((file) => file.endsWith(".tmp"))).toBe(
       false,
     );
-    expect(JSON.parse(exported)).toMatchObject({ schemaVersion: 2 });
+    expect(JSON.parse(exported)).toMatchObject({
+      schemaVersion: 3,
+      app: "Upright",
+    });
   });
 
   it("cleans temporary export files when atomic replacement fails", async () => {

@@ -42,8 +42,14 @@ describe("Dashboard", () => {
         snapshot={snapshot}
         session={session}
         trackingMode="recovering"
+        cameraError={null}
+        cameraFailureCode={null}
+        cameraId="camera-1"
+        hasCalibration
         onToggle={vi.fn()}
         onDiagnostics={vi.fn()}
+        onRetryCamera={vi.fn()}
+        onRecalibrate={vi.fn()}
       />,
     );
     expect(screen.getByText("Camera: Recovering camera")).toBeVisible();

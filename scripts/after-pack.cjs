@@ -123,7 +123,7 @@ exports.default = async function afterPack(context) {
         if (info.includes("NSCameraUsageDescription")) return;
         const cameraEntries = [
           "\t<key>NSCameraUsageDescription</key>",
-          "\t<string>Posture uses your camera to estimate upper-body landmarks locally. Frames are never saved or uploaded.</string>",
+          "\t<string>Upright uses your camera to estimate upper-body landmarks locally. Frames are never saved or uploaded.</string>",
           "\t<key>NSCameraUseContinuityCameraDeviceType</key>",
           "\t<true/>",
         ].join("\n");

@@ -1,32 +1,37 @@
 {
-  "name": "posture-desktop",
-  "version": "0.5.4",
+  "name": "upright-desktop",
+  "version": "0.6.0",
   "description": "A private, local-only posture companion for macOS, Windows, and Linux.",
   "main": "out/main/index.js",
-  "desktopName": "Posture",
+  "desktopName": "upright.desktop",
   "author": {
-    "name": "Posture Contributors",
+    "name": "Upright Contributors",
     "email": "vivaanseth@users.noreply.github.com"
   },
   "license": "MIT",
   "private": true,
-  "homepage": "https://github.com/vivaanseth/Posture#readme",
+  "homepage": "https://github.com/vivaanseth/upright#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vivaanseth/Posture.git"
+    "url": "git+https://github.com/vivaanseth/upright.git"
   },
   "bugs": {
-    "url": "https://github.com/vivaanseth/Posture/issues"
+    "url": "https://github.com/vivaanseth/upright/issues"
   },
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
-    "build": "pnpm verify:assets && pnpm typecheck && electron-vite build",
+    "build": "pnpm verify:assets && pnpm verify:brand && pnpm typecheck && electron-vite build",
     "verify:assets": "node scripts/verify-assets.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "verify:built-package": "node scripts/verify-built-package.mjs",
     "verify:release-assets": "node scripts/verify-release-assets.mjs",
+    "verify:brand": "node scripts/verify-brand.mjs",
+    "generate:sbom": "node scripts/generate-sbom.mjs",
+    "verify:sbom": "node scripts/verify-sbom.mjs",
+    "generate:notices": "node scripts/generate-notices.mjs",
+    "verify:notices": "node scripts/generate-notices.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint . --max-warnings=0",
     "format": "prettier --write .",
@@ -84,7 +89,7 @@
   "packageManager": "pnpm@11.5.3",
   "build": {
     "appId": "app.posture.desktop",
-    "productName": "Posture",
+    "productName": "Upright",
     "asar": true,
     "asarUnpack": [],
     "compression": "maximum",
@@ -122,7 +127,7 @@
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "extendInfo": {
-        "NSCameraUsageDescription": "Posture uses your camera to estimate upper-body landmarks locally. Frames are never saved or uploaded.",
+        "NSCameraUsageDescription": "Upright uses your camera to estimate upper-body landmarks locally. Frames are never saved or uploaded.",
         "NSCameraUseContinuityCameraDeviceType": true
       }
     },
@@ -156,7 +161,7 @@
     "linux": {
       "icon": "build/icon.png",
       "category": "Utility",
-      "executableName": "Posture",
+      "executableName": "upright",
       "maintainer": "vivaanseth <vivaanseth@users.noreply.github.com>",
       "synopsis": "Private posture reminders from your webcam",
       "syncDesktopName": true,
@@ -186,6 +191,12 @@
           ]
         }
       ]
+    },
+    "deb": {
+      "packageName": "posture-desktop"
+    },
+    "rpm": {
+      "packageName": "posture-desktop"
     }
   }
 }

@@ -33,6 +33,10 @@ export function StatusVisual({
       <div
         className="score-ring"
         style={{ "--score": progress } as React.CSSProperties}
+        role={score === null ? "img" : "meter"}
+        aria-valuemin={score === null ? undefined : 0}
+        aria-valuemax={score === null ? undefined : 100}
+        aria-valuenow={score ?? undefined}
         aria-label={
           score === null
             ? meta.label
@@ -51,7 +55,7 @@ export function StatusVisual({
         </div>
       </div>
       <div className="status-copy">
-        <h1>{meta.label}</h1>
+        <h2>{meta.label}</h2>
         <p>
           {state === "good"
             ? "You are close to your calibrated position."
@@ -62,7 +66,7 @@ export function StatusVisual({
                 : state === "paused"
                   ? "Start when you are ready for a focused session."
                   : state === "away"
-                    ? "Posture will continue when you return."
+                    ? "Upright will continue when you return."
                     : "Make sure your head and shoulders are visible."}
         </p>
       </div>

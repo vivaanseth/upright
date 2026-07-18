@@ -26,32 +26,139 @@ export const trackingModes = [
 export const trackingModeSchema = z.enum(trackingModes);
 export type TrackingMode = z.infer<typeof trackingModeSchema>;
 
+const trackingRuntimeFields = {
+  schemaVersion: z.literal(1),
+  mode: trackingModeSchema,
+  cameraId: z.string().min(1).max(512).nullable(),
+  calibrationId: z.string().uuid().nullable(),
+  errorCode: z.string().min(1).max(80).nullable(),
+};
+
+const validateTrackingRuntime = (
+  state: {
+    mode: TrackingMode;
+    cameraId: string | null;
+    calibrationId: string | null;
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (state.mode !== "tracking") return;
+  if (!state.cameraId)
+    context.addIssue({
+      code: "custom",
+      path: ["cameraId"],
+      message: "Tracking requires an active camera.",
+    });
+  if (!state.calibrationId)
+    context.addIssue({
+      code: "custom",
+      path: ["calibrationId"],
+      message: "Tracking requires an exact calibration.",
+    });
+};
+
+export const trackingRuntimeReportSchema = z
+  .object(trackingRuntimeFields)
+  .strict()
+  .superRefine(validateTrackingRuntime);
+export type TrackingRuntimeReport = z.infer<typeof trackingRuntimeReportSchema>;
+
 export const trackingRuntimeStateSchema = z
   .object({
-    schemaVersion: z.literal(1),
-    mode: trackingModeSchema,
-    cameraId: z.string().min(1).max(512).nullable(),
-    calibrationId: z.string().uuid().nullable(),
-    errorCode: z.string().min(1).max(80).nullable(),
+    ...trackingRuntimeFields,
     updatedAt: z.number().finite(),
   })
-  .superRefine((state, context) => {
-    if (state.mode !== "tracking") return;
-    if (!state.cameraId)
-      context.addIssue({
-        code: "custom",
-        path: ["cameraId"],
-        message: "Tracking requires an active camera.",
-      });
-    if (!state.calibrationId)
-      context.addIssue({
-        code: "custom",
-        path: ["calibrationId"],
-        message: "Tracking requires an exact calibration.",
-      });
-  });
-
+  .strict()
+  .superRefine(validateTrackingRuntime);
 export type TrackingRuntimeState = z.infer<typeof trackingRuntimeStateSchema>;
+
+export const cameraOwners = [
+  "none",
+  "onboarding-preview",
+  "diagnostics-preview",
+  "calibration",
+  "tracking",
+] as const;
+export const cameraOwnerSchema = z.enum(cameraOwners);
+export type CameraOwner = z.infer<typeof cameraOwnerSchema>;
+
+export const cameraFailureCodes = [
+  "permission-denied",
+  "permission-restricted",
+  "no-device",
+  "device-busy",
+  "device-disconnected",
+  "unsupported",
+  "playback-failed",
+  "worker-init-failed",
+  "unknown",
+] as const;
+export const cameraFailureCodeSchema = z.enum(cameraFailureCodes);
+export type CameraFailureCode = z.infer<typeof cameraFailureCodeSchema>;
+
+export const cameraOpenResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), cameraId: z.string().min(1).max(512) }),
+  z.object({ ok: z.literal(false), code: cameraFailureCodeSchema }),
+]);
+export type CameraOpenResult = z.infer<typeof cameraOpenResultSchema>;
+
+export const featureExtractionFailureReasons = [
+  "missing-head",
+  "missing-shoulders",
+  "low-confidence",
+  "invalid-framing",
+] as const;
+export type FeatureExtractionResult =
+  | {
+      ok: true;
+      features: PostureFeatures;
+      reliability: {
+        lateralHeadTilt: number;
+        trunkLean: number;
+      };
+    }
+  | {
+      ok: false;
+      reason: (typeof featureExtractionFailureReasons)[number];
+    };
+
+export interface ScoringConfig {
+  readonly version: string;
+  readonly requiredConfidence: number;
+  readonly awayAfterMs: number;
+  readonly smoothingTimeConstantMs: number;
+  readonly hysteresisPoints: number;
+  readonly tolerances: {
+    readonly forwardHead: number;
+    readonly lateralHeadTilt: number;
+    readonly shoulderSlope: number;
+    readonly upperBodyLean: number;
+    readonly verticalCompression: number;
+  };
+  readonly weights: {
+    readonly forwardHead: number;
+    readonly lateralHeadTilt: number;
+    readonly shoulderSlope: number;
+    readonly upperBody: number;
+  };
+}
+
+export const runtimeDiagnosticsSchema = z.object({
+  targetFps: z.union([z.literal(3), z.literal(5), z.literal(8)]),
+  measuredFps: z.number().min(0),
+  inferenceMedianMs: z.number().min(0).nullable(),
+  inferenceP95Ms: z.number().min(0).nullable(),
+  dropRate: z.number().min(0).max(1),
+  workerRestarts: z.number().int().min(0),
+  cameraOwner: cameraOwnerSchema,
+  featureReliability: z
+    .object({
+      lateralHeadTilt: z.number().min(0).max(1),
+      trunkLean: z.number().min(0).max(1),
+    })
+    .nullable(),
+});
+export type RuntimeDiagnostics = z.infer<typeof runtimeDiagnosticsSchema>;
 
 export const powerStateSchema = z.object({
   onBattery: z.boolean(),
@@ -241,6 +348,17 @@ export const exportV2Schema = z.object({
 });
 export type ExportV2 = z.infer<typeof exportV2Schema>;
 
+export const exportV3Schema = z.object({
+  schemaVersion: z.literal(3),
+  exportedAt: z.string().datetime(),
+  app: z.literal("Upright"),
+  settings: settingsSchema,
+  calibrations: z.array(calibrationRecordSchema),
+  sessions: z.array(sessionSummarySchema),
+  privacyNote: z.string().min(1).max(500),
+});
+export type ExportV3 = z.infer<typeof exportV3Schema>;
+
 export const appInfoSchema = z.object({
   name: z.string(),
   version: z.string(),
@@ -266,7 +384,7 @@ export const cameraAccessStatusSchema = z.enum([
 
 export type CameraAccessStatus = z.infer<typeof cameraAccessStatusSchema>;
 
-export interface PostureApi {
+export interface MainWindowApi {
   app: {
     getInfo: () => Promise<AppInfo>;
     getPowerState: () => Promise<PowerState>;
@@ -284,7 +402,7 @@ export interface PostureApi {
     resume: () => Promise<void>;
     stop: () => Promise<void>;
     reportSnapshot: (snapshot: TrackingSnapshotReport) => void;
-    reportRuntimeState: (state: TrackingRuntimeState) => void;
+    reportRuntimeState: (state: TrackingRuntimeReport) => void;
     onCommand: (listener: (command: TrackingCommand) => void) => () => void;
     cancelCalibration: () => Promise<void>;
   };
@@ -318,27 +436,40 @@ export interface PostureApi {
     quit: () => Promise<void>;
   };
   nudge: {
-    dismiss: () => Promise<void>;
-    pauseForMinutes: (minutes: 10 | 30 | 60) => Promise<void>;
-    enableInteraction: () => Promise<void>;
+    preview: () => Promise<void>;
   };
   updates: {
     openLatestRelease: () => Promise<void>;
   };
 }
 
-export type TrackingCommand =
-  | { type: "start" }
-  | { type: "pause"; reason?: string }
-  | { type: "resume" }
-  | { type: "stop" }
-  | { type: "recalibrate" }
-  | { type: "open-settings" }
-  | { type: "cancel-calibration" }
-  | { type: "window-hidden" };
+export interface NudgeWindowApi {
+  dismiss: () => Promise<void>;
+  pauseForMinutes: (minutes: 10) => Promise<void>;
+  enableInteraction: () => Promise<void>;
+  openMain: () => Promise<void>;
+}
+
+export const trackingCommandSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("start") }).strict(),
+  z
+    .object({
+      type: z.literal("pause"),
+      reason: z.string().max(120).optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal("resume") }).strict(),
+  z.object({ type: z.literal("stop") }).strict(),
+  z.object({ type: z.literal("recalibrate") }).strict(),
+  z.object({ type: z.literal("open-settings") }).strict(),
+  z.object({ type: z.literal("cancel-calibration") }).strict(),
+  z.object({ type: z.literal("window-hidden") }).strict(),
+]);
+export type TrackingCommand = z.infer<typeof trackingCommandSchema>;
 
 declare global {
   interface Window {
-    posture: PostureApi;
+    upright: MainWindowApi;
+    uprightNudge: NudgeWindowApi;
   }
 }

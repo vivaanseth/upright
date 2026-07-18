@@ -6,7 +6,16 @@ import {
   Trash,
   Warning,
 } from "@phosphor-icons/react";
-import { useState } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import type {
   CalibrationRecord,
   Settings as SettingsType,
@@ -44,11 +53,25 @@ export function Settings({
   onResetAll,
 }: SettingsProps): React.JSX.Element {
   const [operation, setOperation] = useState<Operation | null>(null);
+  const [confirmation, setConfirmation] = useState<
+    | { type: "delete-sessions" }
+    | { type: "delete-calibration"; cameraId: string }
+    | { type: "reset" }
+    | null
+  >(null);
   const [feedback, setFeedback] = useState<{
     kind: "success" | "error";
     text: string;
   } | null>(null);
   const busy = operation !== null;
+  const operationLabel: Record<Operation, string> = {
+    setting: "Saving…",
+    export: "Exporting…",
+    "delete-sessions": "Deleting sessions…",
+    "delete-calibration": "Deleting calibration…",
+    reset: "Resetting…",
+    external: "Opening…",
+  };
 
   const run = async (
     name: Operation,
@@ -78,58 +101,66 @@ export function Settings({
   };
 
   const exportData = (): void => {
-    void run(
-      "export",
-      async () => {
+    void (async () => {
+      setOperation("export");
+      setFeedback(null);
+      try {
         const destination = await onExport();
-        if (!destination) throw new Error("Export canceled.");
-      },
-      "Local data exported successfully.",
-    );
+        if (destination)
+          setFeedback({
+            kind: "success",
+            text: "Local data exported successfully.",
+          });
+      } catch (error) {
+        setFeedback({
+          kind: "error",
+          text: error instanceof Error ? error.message : "Export failed.",
+        });
+      } finally {
+        setOperation(null);
+      }
+    })();
   };
 
   const deleteSessions = (): void => {
-    if (
-      !window.confirm(
-        "Delete all saved session summaries? Calibration and settings will stay in place.",
-      )
-    )
-      return;
-    void run(
-      "delete-sessions",
-      onDeleteSessions,
-      "All session summaries were deleted.",
-    );
+    setConfirmation({ type: "delete-sessions" });
   };
 
   const deleteCalibration = (cameraId: string): void => {
-    if (
-      !window.confirm(
-        "Delete this camera calibration? You must recalibrate before tracking with this camera.",
-      )
-    )
-      return;
-    void run(
-      "delete-calibration",
-      () => onDeleteCalibration(cameraId),
-      "Camera calibration deleted.",
-    );
+    setConfirmation({ type: "delete-calibration", cameraId });
   };
 
   const resetAll = (): void => {
-    if (
-      window.prompt(
-        "This deletes every local setting, calibration, and session summary. Type RESET to continue.",
-      ) !== "RESET"
-    )
+    setConfirmation({ type: "reset" });
+  };
+
+  const confirmDestructiveAction = (): void => {
+    const pending = confirmation;
+    setConfirmation(null);
+    if (!pending) return;
+    if (pending.type === "delete-sessions") {
+      void run(
+        "delete-sessions",
+        onDeleteSessions,
+        "All session summaries were deleted.",
+      );
       return;
-    void run("reset", onResetAll, "Posture was reset.");
+    }
+    if (pending.type === "delete-calibration") {
+      void run(
+        "delete-calibration",
+        () => onDeleteCalibration(pending.cameraId),
+        "Camera calibration deleted.",
+      );
+      return;
+    }
+    void run("reset", onResetAll, "Upright was reset.");
   };
 
   const openTrusted = (kind: "repository" | "privacy" | "mediapipe"): void => {
     void run(
       "external",
-      () => window.posture.app.openExternalTrustedUrl(kind),
+      () => window.upright.app.openExternalTrustedUrl(kind),
       "Opened in your browser.",
     );
   };
@@ -142,14 +173,16 @@ export function Settings({
       <header className="screen-header">
         <div>
           <span className="context-label">Preferences</span>
-          <h2 id="settings-title">Make Posture fit your day.</h2>
+          <h1 id="settings-title" tabIndex={-1}>
+            Make Upright fit your day.
+          </h1>
         </div>
         <div
           className={`settings-feedback ${feedback?.kind ?? ""}`}
           aria-live="polite"
           aria-atomic="true"
         >
-          {operation ? "Saving…" : (feedback?.text ?? "")}
+          {operation ? operationLabel[operation] : (feedback?.text ?? "")}
         </div>
       </header>
       <div className="settings-groups" aria-busy={busy}>
@@ -198,6 +231,13 @@ export function Settings({
           >
             <Camera size={18} /> Open camera diagnostics
           </button>
+          <ToggleRow
+            label="Advanced diagnostics"
+            helper="Show memory-only performance and feature reliability details."
+            checked={settings.diagnosticsEnabled}
+            disabled={busy}
+            onChange={(value) => update({ diagnosticsEnabled: value })}
+          />
         </SettingsGroup>
 
         <SettingsGroup
@@ -225,7 +265,7 @@ export function Settings({
           </SettingRow>
           <SettingRow
             label="Poor posture delay"
-            helper="Posture waits for a sustained change before nudging."
+            helper="Upright waits for a sustained change before nudging."
           >
             <select
               disabled={busy}
@@ -273,18 +313,18 @@ export function Settings({
 
         <SettingsGroup
           title="Desktop behavior"
-          description="Choose when Posture starts and how it uses battery power."
+          description="Choose when Upright starts and how it uses battery power."
         >
           <ToggleRow
             label="Launch at login"
-            helper="Start Posture after you sign in."
+            helper="Start Upright after you sign in."
             checked={settings.launchAtLogin}
             disabled={busy}
             onChange={(value) => update({ launchAtLogin: value })}
           />
           <ToggleRow
             label="Start tracking automatically"
-            helper="Camera access begins when Posture launches."
+            helper="Camera access begins when Upright launches."
             checked={settings.autoStartTracking}
             disabled={busy}
             onChange={(value) => update({ autoStartTracking: value })}
@@ -352,13 +392,13 @@ export function Settings({
         </SettingsGroup>
 
         <SettingsGroup
-          title="Reset Posture"
+          title="Reset Upright"
           description="Return the app to its first-launch state on this computer."
         >
           <div className="danger-zone">
             <Warning size={20} />
             <div>
-              <strong>Delete all local Posture data</strong>
+              <strong>Delete all local Upright data</strong>
               <p>
                 This removes settings, every calibration, and all session
                 summaries. It cannot be undone.
@@ -375,14 +415,14 @@ export function Settings({
         </SettingsGroup>
 
         <div className="about-row">
-          <span>Posture {version} · MIT License · Not medical software</span>
+          <span>Upright {version} · MIT License · Not medical software</span>
           <button
             className="text-button"
             disabled={busy}
             onClick={() =>
               void run(
                 "external",
-                () => window.posture.updates.openLatestRelease(),
+                () => window.upright.updates.openLatestRelease(),
                 "Opened releases in your browser.",
               )
             }
@@ -405,7 +445,93 @@ export function Settings({
           </button>
         </div>
       </div>
+      {confirmation && (
+        <ConfirmationDialog
+          kind={confirmation.type}
+          onCancel={() => setConfirmation(null)}
+          onConfirm={confirmDestructiveAction}
+        />
+      )}
     </section>
+  );
+}
+
+function ConfirmationDialog({
+  kind,
+  onCancel,
+  onConfirm,
+}: {
+  kind: "delete-sessions" | "delete-calibration" | "reset";
+  onCancel: () => void;
+  onConfirm: () => void;
+}): React.JSX.Element {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [confirmationText, setConfirmationText] = useState("");
+  const isReset = kind === "reset";
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const opener = document.activeElement as HTMLElement | null;
+    if (dialog && !dialog.open) dialog.showModal();
+    cancelRef.current?.focus();
+    return () => opener?.focus();
+  }, []);
+
+  const description =
+    kind === "delete-sessions"
+      ? "Delete all saved session summaries? Camera calibrations and settings will remain."
+      : kind === "delete-calibration"
+        ? "Delete this camera calibration? You must recalibrate before tracking with this camera."
+        : "This deletes every local setting, calibration, and session summary. Type RESET to continue.";
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="confirmation-dialog"
+      aria-labelledby="confirmation-title"
+      aria-describedby="confirmation-description"
+      onCancel={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+    >
+      <div>
+        <h3 id="confirmation-title">
+          {isReset ? "Reset Upright?" : "Confirm deletion"}
+        </h3>
+        <p id="confirmation-description">{description}</p>
+        {isReset && (
+          <label className="field">
+            <span>Confirmation</span>
+            <input
+              autoComplete="off"
+              value={confirmationText}
+              onChange={(event) => setConfirmationText(event.target.value)}
+              placeholder="RESET"
+            />
+          </label>
+        )}
+        <div className="dialog-actions">
+          <button
+            ref={cancelRef}
+            className="button button-secondary"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            className="button button-danger"
+            disabled={isReset && confirmationText !== "RESET"}
+            onClick={onConfirm}
+          >
+            {isReset ? "Reset everything" : "Delete"}
+          </button>
+        </div>
+      </div>
+    </dialog>
   );
 }
 
@@ -436,13 +562,21 @@ function SettingRow({
   label: string;
   helper: string;
 }>): React.JSX.Element {
+  const helperId = useId();
+  const describedChildren = Children.map(children, (child) =>
+    isValidElement(child)
+      ? cloneElement(child as ReactElement<Record<string, unknown>>, {
+          "aria-describedby": helperId,
+        })
+      : child,
+  );
   return (
     <label className="setting-row">
       <span>
         <strong>{label}</strong>
-        <small>{helper}</small>
+        <small id={helperId}>{helper}</small>
       </span>
-      {children}
+      {describedChildren}
     </label>
   );
 }
@@ -460,17 +594,19 @@ function ToggleRow({
   disabled: boolean;
   onChange: (value: boolean) => void;
 }): React.JSX.Element {
+  const helperId = useId();
   return (
     <div className="setting-row">
       <span>
         <strong>{label}</strong>
-        <small>{helper}</small>
+        <small id={helperId}>{helper}</small>
       </span>
       <button
         className={`switch ${checked ? "checked" : ""}`}
         role="switch"
         aria-checked={checked}
         aria-label={label}
+        aria-describedby={helperId}
         disabled={disabled}
         onClick={() => onChange(!checked)}
       >

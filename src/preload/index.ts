@@ -1,13 +1,25 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { z } from "zod";
+import {
+  appInfoSchema,
+  calibrationSchema,
+  calibrationRecordSchema,
+  sessionSummarySchema,
+  settingsSchema,
+  trackingCommandSchema,
+  trackingRuntimeReportSchema,
+  trackingSnapshotReportSchema,
+} from "../shared/contracts";
+import { IPC_CHANNELS } from "../shared/ipc";
 import type {
   Calibration,
   CameraAccessStatus,
-  PostureApi,
+  MainWindowApi,
   PowerState,
   Settings,
   StorageRecoveryNotice,
   TrackingCommand,
-  TrackingRuntimeState,
+  TrackingRuntimeReport,
   TrackingSnapshotReport,
   TrustedUrlKind,
 } from "../shared/contracts";
@@ -59,79 +71,131 @@ function parseStorageRecoveryNotice(value: unknown): StorageRecoveryNotice {
   throw new TypeError("Received an invalid storage recovery notice.");
 }
 
-const api: PostureApi = {
+const invokeVoid = async (
+  channel: string,
+  ...args: unknown[]
+): Promise<void> => {
+  z.void().parse(await ipcRenderer.invoke(channel, ...args));
+};
+
+const api: MainWindowApi = {
   app: {
-    getInfo: () => ipcRenderer.invoke("app:get-info"),
+    getInfo: async () =>
+      appInfoSchema.parse(await ipcRenderer.invoke(IPC_CHANNELS.appGetInfo)),
     getPowerState: async () =>
-      parsePowerState(await ipcRenderer.invoke("app:get-power-state")),
+      parsePowerState(await ipcRenderer.invoke(IPC_CHANNELS.appGetPowerState)),
     onPowerStateChanged: (listener: (state: PowerState) => void) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
         state: unknown,
       ): void => listener(parsePowerState(state));
-      ipcRenderer.on("app:power-state-changed", handler);
+      ipcRenderer.on(IPC_CHANNELS.appPowerStateChanged, handler);
       return () =>
-        ipcRenderer.removeListener("app:power-state-changed", handler);
+        ipcRenderer.removeListener(IPC_CHANNELS.appPowerStateChanged, handler);
     },
     openExternalTrustedUrl: (kind: TrustedUrlKind) =>
-      ipcRenderer.invoke("app:open-url", kind),
+      invokeVoid(IPC_CHANNELS.appOpenUrl, kind),
   },
   camera: {
     getAccessStatus: async () =>
       parseCameraAccessStatus(
-        await ipcRenderer.invoke("camera:get-access-status"),
+        await ipcRenderer.invoke(IPC_CHANNELS.cameraGetAccessStatus),
       ),
     requestAccess: async () =>
       parseCameraAccessStatus(
-        await ipcRenderer.invoke("camera:request-access"),
+        await ipcRenderer.invoke(IPC_CHANNELS.cameraRequestAccess),
       ),
-    openSystemPrivacySettings: () =>
-      ipcRenderer.invoke("camera:open-system-privacy-settings"),
+    openSystemPrivacySettings: async () =>
+      z
+        .boolean()
+        .parse(
+          await ipcRenderer.invoke(IPC_CHANNELS.cameraOpenPrivacySettings),
+        ),
   },
   tracking: {
-    start: () => ipcRenderer.invoke("tracking:start"),
-    pause: (reason?: string) => ipcRenderer.invoke("tracking:pause", reason),
-    resume: () => ipcRenderer.invoke("tracking:resume"),
-    stop: () => ipcRenderer.invoke("tracking:stop"),
+    start: () => invokeVoid(IPC_CHANNELS.trackingStart),
+    pause: (reason?: string) => invokeVoid(IPC_CHANNELS.trackingPause, reason),
+    resume: () => invokeVoid(IPC_CHANNELS.trackingResume),
+    stop: () => invokeVoid(IPC_CHANNELS.trackingStop),
     reportSnapshot: (snapshot: TrackingSnapshotReport) =>
-      ipcRenderer.send("tracking:snapshot", snapshot),
-    reportRuntimeState: (state: TrackingRuntimeState) =>
-      ipcRenderer.send("tracking:runtime-state", state),
-    cancelCalibration: () => ipcRenderer.invoke("tracking:cancel-calibration"),
+      ipcRenderer.send(
+        IPC_CHANNELS.trackingSnapshot,
+        trackingSnapshotReportSchema.parse(snapshot),
+      ),
+    reportRuntimeState: (state: TrackingRuntimeReport) =>
+      ipcRenderer.send(
+        IPC_CHANNELS.trackingRuntimeState,
+        trackingRuntimeReportSchema.parse(state),
+      ),
+    cancelCalibration: () => invokeVoid(IPC_CHANNELS.trackingCancelCalibration),
     onCommand: (listener: (command: TrackingCommand) => void) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
-        command: TrackingCommand,
-      ): void => listener(command);
-      ipcRenderer.on("tracking:command", handler);
-      return () => ipcRenderer.removeListener("tracking:command", handler);
+        command: unknown,
+      ): void => listener(trackingCommandSchema.parse(command));
+      ipcRenderer.on(IPC_CHANNELS.trackingCommand, handler);
+      return () =>
+        ipcRenderer.removeListener(IPC_CHANNELS.trackingCommand, handler);
     },
   },
   settings: {
-    get: () => ipcRenderer.invoke("settings:get"),
-    update: (patch: Partial<Settings>) =>
-      ipcRenderer.invoke("settings:update", patch),
+    get: async () =>
+      settingsSchema.parse(await ipcRenderer.invoke(IPC_CHANNELS.settingsGet)),
+    update: async (patch: Partial<Settings>) =>
+      settingsSchema.parse(
+        await ipcRenderer.invoke(
+          IPC_CHANNELS.settingsUpdate,
+          settingsSchema.partial().parse(patch),
+        ),
+      ),
   },
   calibrations: {
-    list: () => ipcRenderer.invoke("calibrations:list"),
-    save: (calibration: Calibration) =>
-      ipcRenderer.invoke("calibrations:save", calibration),
-    deleteForCamera: (cameraId: string) =>
-      ipcRenderer.invoke("calibrations:delete-camera", cameraId),
+    list: async () =>
+      z
+        .array(calibrationRecordSchema)
+        .parse(await ipcRenderer.invoke(IPC_CHANNELS.calibrationsList)),
+    save: async (calibration: Calibration) =>
+      z
+        .array(calibrationRecordSchema)
+        .parse(
+          await ipcRenderer.invoke(
+            IPC_CHANNELS.calibrationsSave,
+            calibrationSchema.parse(calibration),
+          ),
+        ),
+    deleteForCamera: async (cameraId: string) =>
+      z
+        .array(calibrationRecordSchema)
+        .parse(
+          await ipcRenderer.invoke(
+            IPC_CHANNELS.calibrationsDeleteCamera,
+            cameraId,
+          ),
+        ),
   },
   sessions: {
-    getCurrent: () => ipcRenderer.invoke("sessions:current"),
-    getRecent: (limit = 10) => ipcRenderer.invoke("sessions:recent", limit),
+    getCurrent: async () =>
+      sessionSummarySchema
+        .nullable()
+        .parse(await ipcRenderer.invoke(IPC_CHANNELS.sessionsCurrent)),
+    getRecent: async (limit = 10) =>
+      z
+        .array(sessionSummarySchema)
+        .parse(await ipcRenderer.invoke(IPC_CHANNELS.sessionsRecent, limit)),
   },
   data: {
-    export: () => ipcRenderer.invoke("data:export"),
-    deleteSessions: () => ipcRenderer.invoke("data:delete-sessions"),
-    resetAll: () => ipcRenderer.invoke("data:reset-all"),
+    export: async () =>
+      z
+        .string()
+        .nullable()
+        .parse(await ipcRenderer.invoke(IPC_CHANNELS.dataExport)),
+    deleteSessions: () => invokeVoid(IPC_CHANNELS.dataDeleteSessions),
+    resetAll: () => invokeVoid(IPC_CHANNELS.dataResetAll),
   },
   storage: {
     getRecoveries: async () => {
       const notices: unknown = await ipcRenderer.invoke(
-        "storage:get-recoveries",
+        IPC_CHANNELS.storageGetRecoveries,
       );
       if (!Array.isArray(notices))
         throw new TypeError("Received invalid storage recovery history.");
@@ -142,24 +206,24 @@ const api: PostureApi = {
         _event: Electron.IpcRendererEvent,
         notice: unknown,
       ): void => listener(parseStorageRecoveryNotice(notice));
-      ipcRenderer.on("storage:recovery", handler);
-      return () => ipcRenderer.removeListener("storage:recovery", handler);
+      ipcRenderer.on(IPC_CHANNELS.storageRecovery, handler);
+      return () =>
+        ipcRenderer.removeListener(IPC_CHANNELS.storageRecovery, handler);
     },
   },
   window: {
-    hide: () => ipcRenderer.invoke("window:hide"),
-    openMain: () => ipcRenderer.invoke("window:open-main"),
-    quit: () => ipcRenderer.invoke("window:quit"),
+    hide: () => invokeVoid(IPC_CHANNELS.windowHide),
+    openMain: () => invokeVoid(IPC_CHANNELS.windowOpenMain),
+    quit: () => invokeVoid(IPC_CHANNELS.windowQuit),
   },
   nudge: {
-    dismiss: () => ipcRenderer.invoke("nudge:dismiss"),
-    pauseForMinutes: (minutes: 10 | 30 | 60) =>
-      ipcRenderer.invoke("nudge:pause", minutes),
-    enableInteraction: () => ipcRenderer.invoke("nudge:enable-interaction"),
+    preview: async () => {
+      z.boolean().parse(await ipcRenderer.invoke(IPC_CHANNELS.nudgePreview));
+    },
   },
   updates: {
-    openLatestRelease: () => ipcRenderer.invoke("updates:open"),
+    openLatestRelease: () => invokeVoid(IPC_CHANNELS.updatesOpen),
   },
 };
 
-contextBridge.exposeInMainWorld("posture", api);
+contextBridge.exposeInMainWorld("upright", api);

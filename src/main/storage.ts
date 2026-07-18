@@ -8,7 +8,7 @@ import {
   calibrationSchema,
   calibrationRecordSchema,
   defaultSettings,
-  exportV2Schema,
+  exportV3Schema,
   sessionRecordSchema,
   sessionSummarySchema,
   settingsSchema,
@@ -167,10 +167,10 @@ export class LocalStore {
   }
 
   async exportData(destination: string): Promise<void> {
-    const payload = exportV2Schema.parse({
-      schemaVersion: 2,
+    const payload = exportV3Schema.parse({
+      schemaVersion: 3,
       exportedAt: new Date().toISOString(),
-      app: "Posture",
+      app: "Upright",
       settings: await this.getSettings(),
       calibrations: await this.getCalibrations(),
       sessions: await this.getSessions(),

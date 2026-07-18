@@ -20,8 +20,10 @@ export default defineConfig({
       include: [
         "src/main/security.ts",
         "src/main/storage.ts",
+        "src/renderer/src/runtime/adaptive-sampling.ts",
         "src/shared/posture-engine.ts",
         "src/shared/session-engine.ts",
+        "src/shared/worker-protocol.ts",
       ],
       exclude: [
         "src/renderer/src/workers/**",
@@ -58,6 +60,18 @@ export default defineConfig({
           functions: 80,
           branches: 80,
           statements: 80,
+        },
+        "src/renderer/src/runtime/adaptive-sampling.ts": {
+          lines: 80,
+          functions: 80,
+          branches: 80,
+          statements: 80,
+        },
+        "src/shared/worker-protocol.ts": {
+          lines: 90,
+          functions: 90,
+          branches: 80,
+          statements: 90,
         },
       },
     },

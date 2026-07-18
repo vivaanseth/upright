@@ -13,14 +13,17 @@ if (!version) {
 await access(directory);
 
 const expected = [
-  `Posture-${version}-mac-universal.dmg`,
-  `Posture-${version}-mac-universal.zip`,
-  `Posture-${version}-win-x64.exe`,
-  `Posture-${version}-win-x64.zip`,
-  `Posture-${version}-linux-x86_64.AppImage`,
-  `Posture-${version}-linux-amd64.deb`,
-  `Posture-${version}-linux-x86_64.rpm`,
-  `Posture-${version}-linux-x64.tar.gz`,
+  `Upright-${version}-mac-universal.dmg`,
+  `Upright-${version}-mac-universal.zip`,
+  `Upright-${version}-win-x64.exe`,
+  `Upright-${version}-win-x64.zip`,
+  `Upright-${version}-linux-x86_64.AppImage`,
+  `Upright-${version}-linux-amd64.deb`,
+  `Upright-${version}-linux-x86_64.rpm`,
+  `Upright-${version}-linux-x64.tar.gz`,
+  `Upright-v${version}-macos-sbom.cdx.json`,
+  `Upright-v${version}-windows-sbom.cdx.json`,
+  `Upright-v${version}-linux-sbom.cdx.json`,
   "SHASUMS256.txt",
 ];
 
@@ -28,6 +31,10 @@ const actual = new Set(await readdir(directory));
 const missing = expected.filter((entry) => !actual.has(entry));
 if (missing.length > 0) {
   throw new Error(`Missing release assets:\n- ${missing.join("\n- ")}`);
+}
+const unexpected = [...actual].filter((entry) => !expected.includes(entry));
+if (unexpected.length > 0) {
+  throw new Error(`Unexpected release assets:\n- ${unexpected.join("\n- ")}`);
 }
 
 const manifest = await readFile(path.join(directory, "SHASUMS256.txt"), "utf8");

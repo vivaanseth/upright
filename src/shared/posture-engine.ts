@@ -1,9 +1,11 @@
 import type {
   Calibration,
+  FeatureExtractionResult,
   MetricBreakdown,
   PostureFeatures,
   PostureState,
   Settings,
+  ScoringConfig,
   TrackingSnapshot,
 } from "./contracts";
 
@@ -15,7 +17,59 @@ export interface Landmark {
   presence?: number;
 }
 
-const REQUIRED_CONFIDENCE = 0.65;
+export const SCORING_CONFIG: ScoringConfig = Object.freeze({
+  version: "posture-scoring-v1",
+  requiredConfidence: 0.65,
+  awayAfterMs: 15_000,
+  smoothingTimeConstantMs: 3_000,
+  hysteresisPoints: 5,
+  tolerances: Object.freeze({
+    forwardHead: 0.12,
+    lateralHeadTilt: 8,
+    shoulderSlope: 7,
+    upperBodyLean: 10,
+    verticalCompression: 0.12,
+  }),
+  weights: Object.freeze({
+    forwardHead: 0.45,
+    lateralHeadTilt: 0.2,
+    shoulderSlope: 0.15,
+    upperBody: 0.2,
+  }),
+});
+
+const REQUIRED_CONFIDENCE = SCORING_CONFIG.requiredConfidence;
+
+export function isCalibrationCompatible(
+  calibration: Calibration,
+  resolution: { width: number; height: number },
+  modelVersion = "pose-landmarker-lite-0.10.35",
+): boolean {
+  if (
+    calibration.compatibility !== "compatible" ||
+    calibration.modelVersion !== modelVersion ||
+    calibration.scoringConfigVersion !== SCORING_CONFIG.version ||
+    resolution.width <= 0 ||
+    resolution.height <= 0
+  )
+    return false;
+  const orientation =
+    resolution.width === resolution.height
+      ? "unknown"
+      : resolution.width > resolution.height
+        ? "landscape"
+        : "portrait";
+  if (
+    calibration.orientation !== "unknown" &&
+    orientation !== "unknown" &&
+    calibration.orientation !== orientation
+  )
+    return false;
+  const calibratedRatio =
+    calibration.resolution.width / calibration.resolution.height;
+  const currentRatio = resolution.width / resolution.height;
+  return Math.abs(currentRatio / calibratedRatio - 1) <= 0.05;
+}
 const indexes = {
   nose: 0,
   leftEar: 7,
@@ -33,11 +87,8 @@ export const calibrationRejectionReasons = [
   "too-far",
   "off-center",
   "excessive-motion",
-  "head-occluded",
-  "shoulders-occluded",
   "unstable-tilt",
   "unstable-trunk",
-  "camera-disconnected",
 ] as const;
 
 export type CalibrationRejectionReason =
@@ -70,23 +121,27 @@ const degrees = (radians: number): number => (radians * 180) / Math.PI;
 const lineAngle = (a: Landmark, b: Landmark): number =>
   degrees(Math.atan2(b.y - a.y, b.x - a.x));
 
-export function extractPostureFeatures(
+export function extractPostureFeaturesDetailed(
   landmarks: Landmark[],
-): PostureFeatures | null {
+): FeatureExtractionResult {
   const nose = landmarks[indexes.nose];
   const leftShoulder = landmarks[indexes.leftShoulder];
   const rightShoulder = landmarks[indexes.rightShoulder];
-  if (!nose || !leftShoulder || !rightShoulder) return null;
+  if (!nose) return { ok: false, reason: "missing-head" };
+  if (!leftShoulder || !rightShoulder)
+    return { ok: false, reason: "missing-shoulders" };
 
   const requiredConfidence = Math.min(
     confidenceOf(nose),
     confidenceOf(leftShoulder),
     confidenceOf(rightShoulder),
   );
-  if (requiredConfidence < REQUIRED_CONFIDENCE) return null;
+  if (requiredConfidence < REQUIRED_CONFIDENCE)
+    return { ok: false, reason: "low-confidence" };
 
   const shoulderWidth = distance2d(leftShoulder, rightShoulder);
-  if (shoulderWidth < 0.08 || shoulderWidth > 0.72) return null;
+  if (shoulderWidth < 0.08 || shoulderWidth > 0.72)
+    return { ok: false, reason: "invalid-framing" };
 
   const shoulders = midpoint(leftShoulder, rightShoulder);
   const leftEar = landmarks[indexes.leftEar];
@@ -108,22 +163,36 @@ export function extractPostureFeatures(
   const hips = hipsReliable ? midpoint(leftHip, rightHip) : null;
 
   return {
-    forwardHead: (shoulders.z - head.z) / shoulderWidth,
-    lateralHeadTilt: earsReliable
-      ? lineAngle(leftEar, rightEar)
-      : degrees(Math.atan2(nose.x - shoulders.x, shoulders.y - nose.y)),
-    shoulderSlope: lineAngle(leftShoulder, rightShoulder),
-    verticalCompression: (shoulders.y - nose.y) / shoulderWidth,
-    trunkLean: hips
-      ? degrees(Math.atan2(shoulders.x - hips.x, hips.y - shoulders.y))
-      : null,
-    confidence: hips
-      ? Math.min(requiredConfidence, confidenceOf(hips))
-      : requiredConfidence,
-    shoulderWidth,
-    centerOffset: shoulders.x - 0.5,
-    lateralHeadTiltReliable: Boolean(earsReliable),
+    ok: true,
+    features: {
+      forwardHead: (shoulders.z - head.z) / shoulderWidth,
+      lateralHeadTilt: earsReliable
+        ? lineAngle(leftEar, rightEar)
+        : degrees(Math.atan2(nose.x - shoulders.x, shoulders.y - nose.y)),
+      shoulderSlope: lineAngle(leftShoulder, rightShoulder),
+      verticalCompression: (shoulders.y - nose.y) / shoulderWidth,
+      trunkLean: hips
+        ? degrees(Math.atan2(shoulders.x - hips.x, hips.y - shoulders.y))
+        : null,
+      confidence: hips
+        ? Math.min(requiredConfidence, confidenceOf(hips))
+        : requiredConfidence,
+      shoulderWidth,
+      centerOffset: shoulders.x - 0.5,
+      lateralHeadTiltReliable: Boolean(earsReliable),
+    },
+    reliability: {
+      lateralHeadTilt: earsReliable ? 1 : 0.45,
+      trunkLean: hipsReliable ? 1 : 0,
+    },
   };
+}
+
+export function extractPostureFeatures(
+  landmarks: Landmark[],
+): PostureFeatures | null {
+  const result = extractPostureFeaturesDetailed(landmarks);
+  return result.ok ? result.features : null;
 }
 
 const median = (values: number[]): number => {
@@ -150,13 +219,13 @@ export function buildCalibration(
   if (sampling.elapsedMs < 10_000 || samples.length < 25)
     throw new CalibrationError(
       "insufficient-frames",
-      "Hold still a little longer so Posture can find a stable baseline.",
+      "Hold still a little longer so Upright can find a stable baseline.",
     );
   const totalFrameCount = samples.length + sampling.rejectedFrameCount;
   if (samples.length / Math.max(1, totalFrameCount) < 0.65)
     throw new CalibrationError(
       "low-confidence",
-      "Posture could not see your head and shoulders consistently. Improve the lighting and keep them in view.",
+      "Upright could not see your head and shoulders consistently. Improve the lighting and keep them in view.",
     );
 
   const requiredKeys = [
@@ -214,7 +283,7 @@ export function buildCalibration(
   if (baseline.confidence < REQUIRED_CONFIDENCE)
     throw new CalibrationError(
       "low-confidence",
-      "Posture cannot see your head and shoulders clearly enough.",
+      "Upright cannot see your head and shoulders clearly enough.",
     );
   if (variance.lateralHeadTilt > 3.5)
     throw new CalibrationError(
@@ -254,7 +323,7 @@ export function buildCalibration(
     cameraId,
     createdAt: new Date().toISOString(),
     modelVersion,
-    scoringConfigVersion: "posture-scoring-v1",
+    scoringConfigVersion: SCORING_CONFIG.version,
     resolution,
     orientation:
       resolution.width === resolution.height
@@ -306,18 +375,18 @@ export function scorePosture(
 
   const forwardPenalty = penalty(
     Math.max(0, current.forwardHead - calibration.baseline.forwardHead),
-    0.12,
+    SCORING_CONFIG.tolerances.forwardHead,
   );
   const headTiltPenalty = penalty(
     angleDifference(
       current.lateralHeadTilt,
       calibration.baseline.lateralHeadTilt,
     ),
-    8,
+    SCORING_CONFIG.tolerances.lateralHeadTilt,
   );
   const shoulderPenalty = penalty(
     angleDifference(current.shoulderSlope, calibration.baseline.shoulderSlope),
-    7,
+    SCORING_CONFIG.tolerances.shoulderSlope,
   );
   const compressionPenalty = penalty(
     Math.max(
@@ -325,20 +394,25 @@ export function scorePosture(
       (calibration.baseline.verticalCompression - current.verticalCompression) /
         Math.max(0.01, calibration.baseline.verticalCompression),
     ),
-    0.12,
+    SCORING_CONFIG.tolerances.verticalCompression,
   );
 
-  const trunkAvailable =
-    current.trunkLean !== null && calibration.baseline.trunkLean !== null;
-  const upperPenalty = trunkAvailable
-    ? Math.max(
-        compressionPenalty,
-        penalty(
-          angleDifference(current.trunkLean!, calibration.baseline.trunkLean!),
-          10,
-        ),
-      )
-    : compressionPenalty;
+  const compressionReliable =
+    calibration.reliability.verticalCompression >= 0.25;
+  const trunkReliable =
+    current.trunkLean !== null &&
+    calibration.baseline.trunkLean !== null &&
+    calibration.reliability.trunkLean >= 0.25;
+  const upperPenalties: number[] = [];
+  if (compressionReliable) upperPenalties.push(compressionPenalty);
+  if (trunkReliable)
+    upperPenalties.push(
+      penalty(
+        angleDifference(current.trunkLean!, calibration.baseline.trunkLean!),
+        SCORING_CONFIG.tolerances.upperBodyLean,
+      ),
+    );
+  const upperPenalty = upperPenalties.length ? Math.max(...upperPenalties) : 1;
 
   const breakdown: MetricBreakdown = {
     forwardHead: Math.round((1 - forwardPenalty) * 100),
@@ -350,27 +424,25 @@ export function scorePosture(
   const weightedMetrics = [
     {
       value: breakdown.forwardHead,
-      weight: 0.45,
+      weight: SCORING_CONFIG.weights.forwardHead,
       reliable: calibration.reliability.forwardHead >= 0.25,
     },
     {
       value: breakdown.lateralHeadTilt,
-      weight: 0.2,
-      reliable: calibration.reliability.lateralHeadTilt >= 0.25,
+      weight: SCORING_CONFIG.weights.lateralHeadTilt,
+      reliable:
+        calibration.reliability.lateralHeadTilt >= 0.25 &&
+        current.lateralHeadTiltReliable !== false,
     },
     {
       value: breakdown.shoulderSlope,
-      weight: 0.15,
+      weight: SCORING_CONFIG.weights.shoulderSlope,
       reliable: calibration.reliability.shoulderSlope >= 0.25,
     },
     {
       value: breakdown.upperBody,
-      weight: 0.2,
-      reliable:
-        Math.max(
-          calibration.reliability.verticalCompression,
-          calibration.reliability.trunkLean,
-        ) >= 0.25,
+      weight: SCORING_CONFIG.weights.upperBody,
+      reliable: compressionReliable || trunkReliable,
     },
   ].filter((metric) => metric.reliable);
   const availableWeight = weightedMetrics.reduce(
@@ -421,7 +493,9 @@ export class PostureClassifier {
     if (!features) {
       this.lastReliableAt ??= now;
       const nextState: PostureState =
-        now - this.lastReliableAt >= 15_000 ? "away" : "unknown";
+        now - this.lastReliableAt >= SCORING_CONFIG.awayAfterMs
+          ? "away"
+          : "unknown";
       this.state = nextState;
       return this.snapshot(
         nextState,
@@ -449,7 +523,8 @@ export class PostureClassifier {
         now,
       );
     }
-    const alpha = 1 - Math.exp(-deltaMs / 3_000);
+    const alpha =
+      1 - Math.exp(-deltaMs / SCORING_CONFIG.smoothingTimeConstantMs);
     this.smoothedScore =
       this.smoothedScore === null
         ? scored.score
@@ -473,11 +548,12 @@ export class PostureClassifier {
   }
 
   private classifyWithHysteresis(score: number): PostureState {
-    if (this.state === "good" && score >= 70) return "good";
-    if (this.state === "poor" && score < 55) return "poor";
+    const hysteresis = SCORING_CONFIG.hysteresisPoints;
+    if (this.state === "good" && score >= 75 - hysteresis) return "good";
+    if (this.state === "poor" && score < 50 + hysteresis) return "poor";
     if (this.state === "caution") {
-      if (score >= 80) return "good";
-      if (score < 45) return "poor";
+      if (score >= 75 + hysteresis) return "good";
+      if (score < 50 - hysteresis) return "poor";
       return "caution";
     }
     if (score >= 75) return "good";

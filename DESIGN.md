@@ -2,7 +2,7 @@
 
 ## Theme
 
-Posture is used during focused desk work in ordinary daylight and low evening light. The interface uses a restrained, system-aware light/dark theme with cool neutral surfaces and a muted sky-teal anchor. It should feel like a precise desktop instrument without looking technical or clinical.
+Upright is used during focused desk work in ordinary daylight and low evening light. The interface uses a restrained, system-aware light/dark theme with cool neutral surfaces and a muted sky-teal anchor. It should feel like a precise desktop instrument without looking technical or clinical.
 
 Color strategy: restrained. Brand color appears only in primary actions, active navigation, focus, and positive posture state.
 

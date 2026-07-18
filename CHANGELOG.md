@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 - 2026-07-16
+
+- Renamed the public application and repository to Upright while preserving the existing application ID, Linux package identity, camera permission state, settings, calibrations, sessions, and Chromium data.
+- Added Export V3, the `window.upright` renderer API, and a separate minimal `window.uprightNudge` capability bridge.
+- Added recent-session history, initialization recovery, accessible destructive-action dialogs, onboarding reminder preview, dashboard Away time, and memory-only diagnostics.
+- Hardened IPC window-role/main-frame validation, packaged renderer network denial, camera permission ownership, renderer failure recovery, and lock/sleep handling.
+- Added explicit camera ownership, worker protocol validation and correlation, bounded worker recovery, calibration compatibility checks, detailed feature reliability, and rolling adaptive sampling.
+- Replaced artifact-directory SBOM generation with validated CycloneDX 1.6 runtime graphs containing the bundled pose model.
+- Changed tag builds to create verified draft releases and added a protected manual promotion workflow.
+
 All notable changes follow semantic versioning.
 
 ## 0.5.4 - 2026-07-14
